@@ -85,7 +85,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       const existingNotesMap = StorageService.getNotesMap();
       const result = parseExcelWorkbook(
         buffer,
-        'Расписание_26.М16-мо_07-14_сент.xlsx',
+        'Расписание_университет_07-14_сент.xlsx',
         userSettings,
         existingNotesMap
       );
@@ -107,7 +107,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'Расписание_26.М16-мо_07-14_сент.xlsx';
+      a.download = 'Расписание_университет_07-14_сент.xlsx';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -193,12 +193,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
             <div className="flex items-center justify-between">
               <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                 <CheckCircle className="w-4 h-4 text-emerald-600" />
-                Тестовый сценарий: группа 26.М16-мо
+                Тестовый сценарий: демонстрационный Excel
               </div>
               <span className="text-[11px] text-slate-500 font-medium">7–14 сент. 2026</span>
             </div>
             <p className="text-xs text-slate-600 leading-relaxed">
-              Вы можете прямо сейчас протестировать импорт расписания СПбГУ с дисциплинами «Дипломатия данных», «Актуальные проблемы теории МО», элективами по английскому (подгруппы 1, 2, 4) и дубликатами.
+              Вы можете прямо сейчас протестировать импорт расписания с дисциплинами «Дипломатия данных», «Актуальные проблемы теории МО», элективами по английскому (подгруппы 1, 2, 4) и проверкой дубликатов.
             </p>
             <div className="flex flex-wrap items-center gap-2 pt-1">
               <button
@@ -209,7 +209,7 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                 className="px-3 py-2 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-md text-xs font-semibold shadow-2xs flex items-center gap-1.5 transition-colors"
               >
                 <Play className="w-3.5 h-3.5 fill-current" />
-                Протестировать импорт образца 26.М16-мо
+                Протестировать импорт демо-файла
               </button>
               <button
                 type="button"

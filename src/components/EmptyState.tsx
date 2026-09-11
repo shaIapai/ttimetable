@@ -65,7 +65,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
               className="w-full py-2 px-3 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200 text-emerald-800 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 transition-all"
             >
               <Sparkles className="w-3.5 h-3.5 text-emerald-600" />
-              Загрузить демонстрационное расписание (26.М16-мо)
+              Загрузить демонстрационное расписание
             </button>
           </div>
         </div>

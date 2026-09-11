@@ -152,7 +152,7 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
               Группа:{' '}
-              <strong className="text-slate-700">{importResult.groupName || '26.М16-мо'}</strong> •
+              <strong className="text-slate-700">{importResult.groupName || 'Группа не определена'}</strong> •
               Период: <strong className="text-slate-700">{importResult.dateRangeText}</strong>
             </p>
           </div>
@@ -165,8 +165,21 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
           </button>
         </div>
 
+        {/* Warning if year could not be determined */}
+        {importResult.hasYearError && (
+          <div className="px-6 py-2.5 bg-rose-50 border-b border-rose-200 flex items-center gap-2 text-xs text-rose-800">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+            <span>
+              <strong className="font-semibold">
+                {importResult.yearErrorMessage || 'Не удалось определить год расписания.'}
+              </strong>{' '}
+              Строки без определенного года не выбраны к импорту для предотвращения ошибок в календаре.
+            </span>
+          </div>
+        )}
+
         {/* Warning if date errors exist */}
-        {importResult.hasDateErrors && (
+        {!importResult.hasYearError && importResult.hasDateErrors && (
           <div className="px-6 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-xs text-amber-800">
             <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
             <span>
@@ -209,10 +222,10 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
               onChange={(e) => applyRulesForSubgroup(e.target.value)}
               className="px-2 py-0.5 font-bold text-blue-700 bg-blue-50 border border-blue-200 rounded focus:ring-1 focus:ring-blue-500"
             >
-              <option value="4">Подгруппа 4 (ваша)</option>
-              <option value="1">Подгруппа 1</option>
-              <option value="2">Подгруппа 2</option>
-              <option value="3">Подгруппа 3</option>
+              <option value="1">Подгруппа 1{userSettings.mySubgroup === '1' ? ' (ваша)' : ''}</option>
+              <option value="2">Подгруппа 2{userSettings.mySubgroup === '2' ? ' (ваша)' : ''}</option>
+              <option value="3">Подгруппа 3{userSettings.mySubgroup === '3' ? ' (ваша)' : ''}</option>
+              <option value="4">Подгруппа 4{userSettings.mySubgroup === '4' ? ' (ваша)' : ''}</option>
               <option value="all">Все подгруппы</option>
             </select>
           </div>

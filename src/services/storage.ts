@@ -107,11 +107,11 @@ export class StorageService {
     try {
       localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify(events));
 
-      // Update notes map for each event that has a note
+      // Update notes map for each event that has a note using canonical signature/importKey
       const map = this.getNotesMap();
       events.forEach((ev) => {
         if (ev.note) {
-          const sig = createEventSignature(ev);
+          const sig = ev.importKey || createEventSignature(ev);
           map[sig] = ev.note;
         }
       });
@@ -124,17 +124,21 @@ export class StorageService {
   /**
    * Merges imported events into the existing schedule:
    * 1. Preserves already existing weeks (e.g. week 1 + week 2).
-   * 2. If an event is re-imported, does NOT create a duplicate.
-   * 3. Preserves user modifications (notes, reminders, manual edits).
+   * 2. If an event is re-imported, does NOT create a duplicate (matches by stable importKey).
+   * 3. Preserves user modifications (Requirement 5 & 6: manual edits, notes, reminders).
    */
   static mergeImportedEvents(incomingEvents: UniversalEvent[]): MergeImportResult {
     const existingEvents = this.getEvents();
-    const existingMap = new Map<string, UniversalEvent>();
+    const existingByImportKey = new Map<string, UniversalEvent>();
+    const existingBySignature = new Map<string, UniversalEvent>();
 
-    // Index existing events by their deterministic signature
+    // Index existing events by their stable importKey and by signature
     existingEvents.forEach((ev) => {
-      const key = createEventSignature(ev);
-      existingMap.set(key, ev);
+      if (ev.importKey) {
+        existingByImportKey.set(ev.importKey, ev);
+      }
+      const sig = createEventSignature(ev);
+      existingBySignature.set(sig, ev);
     });
 
     let addedCount = 0;
@@ -145,22 +149,31 @@ export class StorageService {
     const notesMap = this.getNotesMap();
 
     incomingEvents.forEach((incoming) => {
-      const key = createEventSignature(incoming);
-      const existing = existingMap.get(key);
+      const incomingKey = incoming.importKey || createEventSignature(incoming);
+      incoming.importKey = incomingKey;
+
+      // Find existing match: first by stable importKey, then by signature fallback
+      const existing = existingByImportKey.get(incomingKey) || existingBySignature.get(incomingKey);
 
       if (existing) {
         // Event already exists in schedule!
-        if (existing.isUserModified) {
-          // The student customized this event manually; do NOT overwrite!
-          preservedModificationsCount++;
-        } else {
-          // Update details from Excel while preserving notes and reminders
-          const index = resultEvents.findIndex((e) => e.id === existing.id);
-          if (index >= 0) {
+        const index = resultEvents.findIndex((e) => e.id === existing.id);
+        if (index >= 0) {
+          if (existing.isUserModified) {
+            // Requirement 5 & 6: The student customized this event manually (room, time, title, note, reminder)
+            // DO NOT overwrite user's modifications with Excel data!
+            resultEvents[index] = {
+              ...existing,
+              importKey: existing.importKey || incomingKey,
+            };
+            preservedModificationsCount++;
+          } else {
+            // Unmodified event: update details from Excel while preserving notes, reminders, and ID
             resultEvents[index] = {
               ...incoming,
               id: existing.id,
-              note: existing.note || incoming.note || notesMap[key],
+              importKey: existing.importKey || incomingKey,
+              note: existing.note || incoming.note || notesMap[incomingKey],
               reminder:
                 existing.reminder && existing.reminder !== 'none'
                   ? existing.reminder
@@ -172,13 +185,13 @@ export class StorageService {
           }
         }
       } else {
-        // New event (either a new week, e.g. 14-20 сентября, or an added class)
-        const noteFromMap = notesMap[key];
+        // Brand new event (e.g. newly imported week)
+        const noteFromMap = notesMap[incomingKey];
         if (noteFromMap && !incoming.note) {
           incoming.note = noteFromMap;
         }
         resultEvents.push(incoming);
-        existingMap.set(key, incoming);
+        existingByImportKey.set(incomingKey, incoming);
         addedCount++;
       }
     });
@@ -232,7 +245,7 @@ export class StorageService {
   }
 
   /**
-   * Load demo 26.М16-мо sample schedule
+   * Load demo sample schedule
    */
   static resetToDemo(): UniversalEvent[] {
     const demo = getInitialDemoEvents();

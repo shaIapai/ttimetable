@@ -15,6 +15,7 @@ export type EventSource = 'imported' | 'manual';
 
 export interface UniversalEvent {
   id: string;
+  importKey?: string; // Stable signature of the original lesson for re-import matching
   title: string;
   date: string; // ISO date format: YYYY-MM-DD
   startTime: string; // HH:mm format, e.g. "11:10"
@@ -31,7 +32,7 @@ export interface UniversalEvent {
   reminder?: ReminderOption;
   source: EventSource;
   isUserModified?: boolean; // Set to true if manually edited by the user
-  importedFrom?: string; // e.g. "Расписание_26.М16-мо_07-14_сент.xlsx"
+  importedFrom?: string; // e.g. "Расписание_недели.xlsx"
   createdAt: string;
   updatedAt: string;
   color?: string;
@@ -41,6 +42,7 @@ export interface UniversalEvent {
 
 export interface FilterSettings {
   mySubgroup: string; // e.g. "4"
+  groupName?: string; // e.g. detected academic group name
   hideOtherSubgroups: boolean; // hide lessons of subgroups != mySubgroup
   hideElectives: boolean; // hide all electives
   hideOtherElectives: boolean; // hide electives that belong to other subgroups
@@ -69,6 +71,8 @@ export interface ImportResult {
   recognizedCount: number;
   totalDuplicates: number;
   hasDateErrors: boolean;
+  hasYearError?: boolean;
+  yearErrorMessage?: string;
   items: ImportPreviewItem[];
 }
 

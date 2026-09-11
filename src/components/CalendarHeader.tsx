@@ -65,7 +65,9 @@ export const CalendarHeader: React.FC<CalendarHeaderProps> = ({
                 Моё расписание
               </h1>
               <span className="text-[11px] text-slate-500 font-medium">
-                Группа 26.М16-мо • Личный календарь
+                {userSettings.groupName && userSettings.groupName !== 'Группа не определена'
+                  ? `Группа ${userSettings.groupName} • Личный календарь`
+                  : 'Личный календарь студента'}
               </span>
             </div>
           </div>

@@ -245,7 +245,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 type="button"
                 id="reset-demo-button"
                 onClick={() => {
-                  if (window.confirm('Сбросить расписание на исходный пример 26.М16-мо?')) {
+                  if (window.confirm('Сбросить расписание на демонстрационный пример?')) {
                     onResetDemo();
                     onClose();
                   }
@@ -253,7 +253,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 className="px-3 py-2 bg-slate-100 hover:bg-slate-200 rounded-md text-xs font-semibold text-slate-700 flex items-center gap-1.5 transition-colors"
               >
                 <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-                Восстановить демо 26.М16-мо
+                Восстановить демо-расписание
               </button>
 
               <button

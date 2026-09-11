@@ -58,11 +58,12 @@ const RU_MONTHS: Record<string, number> = {
 /**
  * Parses Russian date strings dynamically without a hardcoded year.
  * Searches for explicit year in the string, or uses the dynamically detected documentYear.
+ * Returns null if the year cannot be determined (never silently defaults to current year).
  */
 export function parseDateString(raw: unknown, documentYear?: number): string | null {
   if (raw === null || raw === undefined) return null;
 
-  // Handle Excel Date object or serial number
+  // Handle Excel Date object
   if (raw instanceof Date && !isNaN(raw.getTime())) {
     const y = raw.getFullYear();
     const m = String(raw.getMonth() + 1).padStart(2, '0');
@@ -87,29 +88,44 @@ export function parseDateString(raw: unknown, documentYear?: number): string | n
   const text = cleanText(raw).toLowerCase();
   if (!text) return null;
 
-  const fallbackYear = documentYear || new Date().getFullYear();
-
   // 1. ISO format: YYYY-MM-DD
   const isoMatch = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
   if (isoMatch) {
     return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
   }
 
-  // 2. Dot format: DD.MM.YYYY or DD.MM.YY or DD.MM
-  const dotMatch = text.match(/\b(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?\b/);
-  if (dotMatch) {
-    const d = parseInt(dotMatch[1], 10);
-    const m = parseInt(dotMatch[2], 10);
-    if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
-      let year = dotMatch[3] ? parseInt(dotMatch[3], 10) : fallbackYear;
-      if (year < 100) year += 2000;
+  // 2. Dot format with explicit 4-digit or 2-digit year: DD.MM.YYYY or DD.MM.YY
+  const dotWithYearMatch = text.match(/\b(\d{1,2})\.(\d{1,2})\.(\d{2,4})\b/);
+  if (dotWithYearMatch) {
+    const d = parseInt(dotWithYearMatch[1], 10);
+    const m = parseInt(dotWithYearMatch[2], 10);
+    let year = parseInt(dotWithYearMatch[3], 10);
+    if (year < 100) year += 2000;
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12 && year >= 2000 && year <= 2099) {
       const dd = String(d).padStart(2, '0');
       const mm = String(m).padStart(2, '0');
       return `${year}-${mm}-${dd}`;
     }
   }
 
-  // 3. Textual date e.g. "понедельник 7 сентября 2026", "7 сентября 2026 г.", "7 сентября", "07 сен 2025"
+  // 3. Dot format without year: DD.MM (e.g. "07.09")
+  // Only valid if documentYear is known!
+  const dotNoYearMatch = text.match(/\b(\d{1,2})\.(\d{1,2})\b/);
+  if (dotNoYearMatch && !text.includes(':')) {
+    if (!documentYear) {
+      // Requirement 2: Cannot determine year unambiguously, do not guess
+      return null;
+    }
+    const d = parseInt(dotNoYearMatch[1], 10);
+    const m = parseInt(dotNoYearMatch[2], 10);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+      const dd = String(d).padStart(2, '0');
+      const mm = String(m).padStart(2, '0');
+      return `${documentYear}-${mm}-${dd}`;
+    }
+  }
+
+  // 4. Textual date e.g. "понедельник 7 сентября 2026", "7 сентября 2026 г.", "7 сентября", "07 сен 2025"
   for (const [monthName, monthIndex] of Object.entries(RU_MONTHS)) {
     if (text.includes(monthName)) {
       // Look for day number before or around the month name
@@ -118,7 +134,11 @@ export function parseDateString(raw: unknown, documentYear?: number): string | n
       if (match) {
         const day = parseInt(match[1], 10);
         if (day >= 1 && day <= 31) {
-          const year = match[2] ? parseInt(match[2], 10) : fallbackYear;
+          const year = match[2] ? parseInt(match[2], 10) : documentYear;
+          if (!year) {
+            // Requirement 2: No year in cell and no documentYear -> do not guess
+            return null;
+          }
           const mm = String(monthIndex + 1).padStart(2, '0');
           const dd = String(day).padStart(2, '0');
           return `${year}-${mm}-${dd}`;
@@ -216,32 +236,26 @@ export function detectLessonType(text: string): { type: LessonType; label: strin
 }
 
 /**
- * Cleans the subject title: removes elective/trajectory prefixes, trailing lesson types,
- * and trailing subgroup mentions.
+ * Cleans the subject title: removes trailing lesson types and trailing subgroup mentions,
+ * but PRESERVES the full course name (including "Электив. Основная траектория." if present in official title).
  */
 export function cleanSubjectTitle(raw: string): { title: string; isElective: boolean } {
-  let text = cleanText(raw);
-  let isElective = false;
+  const original = String(raw || '');
+  const isElective = /электив|по выбору|основная траектория/i.test(original);
 
-  if (/электив|по выбору|основная траектория/i.test(text)) {
-    isElective = true;
-  }
+  // Normalize newlines and whitespace
+  let text = original.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
 
-  // Strip common university prefixes
-  text = text.replace(/^электив[\.\s\-]+/i, '');
-  text = text.replace(/^основная траектория[\.\s\-]+/i, '');
-  text = text.replace(/^элективная дисциплина[\.\s\-]+/i, '');
-  text = text.replace(/^дисциплина по выбору[\.\s\-]+/i, '');
+  // Strip subgroup references from title (e.g. "Подгруппа 4", "п/г 2", "4 подгруппа")
+  text = text.replace(/,?\s*(?:подгрупп[аые]\s*№?\s*\d+|п\s*\/\s*г\s*№?\s*\d+|\d+\s*[-–—]?(?:я|ая)?\s*подгрупп[аые])\b/gi, '');
 
-  // Strip trailing lesson types if attached at the end
-  text = text.replace(/,?\s*(лекция|семинар|практическое занятие|лабораторная работа|консультация)\s*$/i, '');
+  // Strip trailing lesson types if attached at the end (e.g. ", практическое занятие", ", семинар")
+  text = text.replace(/,?\s*(?:практическое занятие|семинар|лекция|лабораторная работа|консультация|зачет|зачёт|экзамен)\b\s*$/gi, '');
 
-  // Strip trailing subgroup mentions
-  text = text.replace(/,?\s*подгруппа\s*\d+\s*$/i, '');
-  text = text.replace(/,?\s*п\/г\s*\d+\s*$/i, '');
-  text = text.replace(/,?\s*\d+\s*подгруппа\s*$/i, '');
+  // Strip parenthetical lesson types at end (e.g. "(практическое занятие)")
+  text = text.replace(/\s*\((?:практическое занятие|семинар|лекция|лабораторная работа|консультация|зачет|зачёт|экзамен)\)\s*$/gi, '');
 
-  // Clean trailing commas or dashes
+  // Clean trailing commas, semicolons, colons, dashes or periods
   text = text.replace(/[,;:\-\s]+$/, '').trim();
 
   return {
@@ -264,7 +278,7 @@ export function isAuxiliaryText(raw: string): boolean {
     /^(?:лекция|семинар|практическое занятие|лабораторная работа|консультация)$/i,
     /^(?:практическое занятие|семинар|лекция)\s*,?\s*(?:подгрупп[аые]\s*\d+|п\/г\s*\d+)?$/i,
     /^(?:подгрупп[аые]\s*\d+|п\/г\s*\d+)\s*,?\s*(?:практическое занятие|семинар|лекция)?$/i,
-    /^(?:основная траектория|электив)$/i,
+    /^(?:подгруппа|п\/г)$/i,
   ];
 
   return auxiliaryOnlyPatterns.some((pattern) => pattern.test(text));
@@ -302,13 +316,13 @@ export function parseLocation(raw: string): { location: string; address: string 
 
 /**
  * Creates a stable deterministic identity key for duplicate detection and re-import matching.
- * Implements requirement 9:
- * Accounts for:
- * 1. date
- * 2. time (startTime - endTime)
- * 3. title (normalized)
- * 4. lessonType (normalized)
- * 5. subgroup (normalized)
+ * Implements requirement 3:
+ * Single canonical signature used for:
+ * - importKey
+ * - notes lookup and persistence
+ * - duplicate detection
+ * - re-import matching
+ * Accounts for: date + time + normalized title + lessonType + subgroup
  */
 export function createEventSignature(event: Partial<UniversalEvent>): string {
   const d = (event.date || '').trim();
@@ -322,9 +336,9 @@ export function createEventSignature(event: Partial<UniversalEvent>): string {
 
 /**
  * Scans the worksheet for document-level metadata:
- * - detects academic group name (e.g. "26.М16-мо")
- * - detects year from headers or dates (e.g. 2026, 2025, 2024)
- * - detects date range text (e.g. "7 сентября 2026 – 14 сентября 2026")
+ * - detects academic group name (Requirement 1: NO hardcoded fallback)
+ * - detects year from headers, date range, or cell dates (Requirement 2: NO silent current year fallback)
+ * - detects date range text
  */
 function scanDocumentMetadata(rawRows: unknown[][]): {
   groupName: string;
@@ -335,36 +349,76 @@ function scanDocumentMetadata(rawRows: unknown[][]): {
   let detectedYear: number | undefined = undefined;
   let dateRangeText = '';
 
-  const inspectRowCount = Math.min(25, rawRows.length);
+  const inspectRowCount = Math.min(30, rawRows.length);
   for (let r = 0; r < inspectRowCount; r++) {
-    const rowStr = rawRows[r].map(cleanText).join(' ');
+    const row = rawRows[r];
+    if (!row) continue;
+    const rowStr = row.map(cleanText).join(' ');
 
-    // Group name pattern: e.g. "26.М16-мо" or "21.Б01"
-    const groupMatch = rowStr.match(/(\d{2}\.[а-яА-Яa-zA-Z0-9\-]+)/);
-    if (groupMatch && !groupName) {
-      groupName = groupMatch[1];
+    // 1. Group name search across cells in top rows
+    if (!groupName) {
+      for (const cell of row) {
+        const text = cleanText(cell);
+        const cellMatch = text.match(/\b(\d{2}\.[а-яА-Яa-zA-Z0-9\-]+)\b/);
+        if (cellMatch) {
+          groupName = cellMatch[1];
+          break;
+        }
+        const groupLabelMatch = text.match(/(?:групп[аы]?\s*[:№]?\s*)([а-яА-Яa-zA-Z0-9\.\-]+)/i);
+        if (groupLabelMatch) {
+          groupName = groupLabelMatch[1];
+          break;
+        }
+      }
     }
 
-    // Date range pattern: e.g. "07.09.2026 - 13.09.2026" or "7 сентября ... 13 сентября"
-    const rangeMatch = rowStr.match(
-      /(\d{1,2}\s+[а-яА-Я]+\s*(?:\d{4})?\s*[-–—]\s*\d{1,2}\s+[а-яА-Я]+\s*(?:\d{4})?)/i
-    );
-    if (rangeMatch && !dateRangeText) {
-      dateRangeText = rangeMatch[1];
+    // 2. Date range pattern
+    if (!dateRangeText) {
+      const rangeMatch = rowStr.match(
+        /(\d{1,2}\s+[а-яА-Я]+\s*(?:\d{4})?\s*[-–—]\s*\d{1,2}\s+[а-яА-Я]+\s*(?:\d{4})?)/i
+      ) || rowStr.match(
+        /(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\s*[-–—]\s*\d{1,2}\.\d{1,2}(?:\.\d{2,4})?)/
+      ) || rowStr.match(
+        /(?:с\s+)?(\d{1,2}\.\d{1,2}(?:\.\d{2,4})?\s+по\s+\d{1,2}\.\d{1,2}(?:\.\d{2,4})?)/i
+      );
+      if (rangeMatch) {
+        dateRangeText = rangeMatch[0];
+      }
     }
 
-    // Search for 4-digit year (2020 - 2035)
-    const yearMatch = rowStr.match(/\b(202[0-9]|203[0-5])\b/);
-    if (yearMatch && !detectedYear) {
-      detectedYear = parseInt(yearMatch[1], 10);
+    // 3. Search for 4-digit year (2020 - 2035) in top rows
+    if (!detectedYear) {
+      const yearMatch = rowStr.match(/\b(202[0-9]|203[0-5])\b/);
+      if (yearMatch) {
+        detectedYear = parseInt(yearMatch[1], 10);
+      }
     }
   }
 
-  // If no year found in header, check date cells across the first 40 rows
+  // If no year found in header, check date cells, Excel Date objects across rows
   if (!detectedYear) {
-    for (let r = 0; r < Math.min(40, rawRows.length); r++) {
+    for (let r = 0; r < Math.min(100, rawRows.length); r++) {
       const row = rawRows[r];
+      if (!row) continue;
       for (const cell of row) {
+        if (cell instanceof Date && !isNaN(cell.getTime())) {
+          const y = cell.getFullYear();
+          if (y >= 2020 && y <= 2035) {
+            detectedYear = y;
+            break;
+          }
+        }
+        if (typeof cell === 'number' && cell > 30000 && cell < 60000) {
+          try {
+            const parsed = XLSX.SSF.parse_date_code(cell);
+            if (parsed && parsed.y >= 2020 && parsed.y <= 2035) {
+              detectedYear = parsed.y;
+              break;
+            }
+          } catch {
+            // ignore
+          }
+        }
         const text = cleanText(cell);
         const yMatch = text.match(/\b(202[0-9]|203[0-5])\b/);
         if (yMatch) {
@@ -377,7 +431,7 @@ function scanDocumentMetadata(rawRows: unknown[][]): {
   }
 
   return {
-    groupName,
+    groupName: groupName || 'Группа не определена',
     detectedYear,
     dateRangeText,
   };
@@ -402,7 +456,9 @@ export function parseExcelWorkbook(
 
   // 1. Scan document metadata (Group name, document year, date range)
   const meta = scanDocumentMetadata(rawRows);
-  const docYear = meta.detectedYear || new Date().getFullYear();
+  const docYear = meta.detectedYear;
+  const hasYearError = !docYear;
+  const yearErrorMessage = hasYearError ? 'Не удалось определить год расписания.' : undefined;
 
   let lastKnownDate: string | null = null;
   const rawEvents: UniversalEvent[] = [];
@@ -481,12 +537,13 @@ export function parseExcelWorkbook(
     let dateErrorMessage: string | undefined = undefined;
 
     if (!eventDate) {
-      // Date could not be determined!
+      // Date or year could not be determined!
       hasDateErrors = true;
       rowHasDateError = true;
-      dateErrorMessage = 'Не удалось определить дату занятия из файла';
-      // Use today's ISO date as placeholder so it can be viewed, but flag the error
-      eventDate = new Date().toISOString().split('T')[0];
+      dateErrorMessage = hasYearError
+        ? 'Не удалось определить год расписания'
+        : 'Не удалось определить дату занятия из файла';
+      eventDate = '0000-00-00';
     }
 
     // Subgroup extraction from all cells of this row
@@ -505,8 +562,15 @@ export function parseExcelWorkbook(
     // Parse location & address
     const { location, address } = parseLocation(locationCell);
 
-    // Check existing note by deterministic signature
-    const noteSignature = `${eventDate}|${parsedTime.startTime}-${parsedTime.endTime}|${title.toLowerCase().trim()}`;
+    // Check existing note by canonical signature
+    const noteSignature = createEventSignature({
+      date: eventDate,
+      startTime: parsedTime.startTime,
+      endTime: parsedTime.endTime,
+      title,
+      lessonType,
+      subgroup,
+    });
     const existingNote = existingNotesMap[noteSignature] || '';
 
     const newEvent: UniversalEvent = {
@@ -534,6 +598,9 @@ export function parseExcelWorkbook(
       dateErrorMessage,
     };
 
+    // Stable importKey for re-import matching (Requirement 4)
+    newEvent.importKey = createEventSignature(newEvent);
+
     rawEvents.push(newEvent);
   }
 
@@ -543,7 +610,7 @@ export function parseExcelWorkbook(
   let duplicatesCount = 0;
 
   for (const ev of rawEvents) {
-    const sig = createEventSignature(ev);
+    const sig = ev.importKey || createEventSignature(ev);
     if (seenSignatures.has(sig)) {
       duplicatesCount++;
     } else {
@@ -552,15 +619,15 @@ export function parseExcelWorkbook(
     }
   }
 
-  // 5. Build Preview Items with rules matching (Requirement 6 & 7)
+  // 5. Build Preview Items with rules matching
   const previewItems: ImportPreviewItem[] = deduplicatedEvents.map((ev) => {
-    if (ev.hasDateError) {
+    if (ev.hasDateError || ev.date === '0000-00-00') {
       return {
         id: ev.id,
         event: ev,
         selected: false,
         matchesUserRules: false,
-        reason: '✕ Ошибка: дата не определена',
+        reason: `✕ ${ev.dateErrorMessage || 'Ошибка: дата не определена'}`,
         hasDateError: true,
       };
     }
@@ -569,7 +636,6 @@ export function parseExcelWorkbook(
     let reason = '✓ Подходит для расписания';
 
     if (ev.isElective) {
-      // Elective logic (Requirement 7)
       if (userSettings.hideElectives) {
         matchesRules = false;
         reason = '✕ Электив (скрыт общей настройкой)';
@@ -591,7 +657,6 @@ export function parseExcelWorkbook(
         reason = '✓ Общий электив группы';
       }
     } else {
-      // Standard pair logic (Requirement 6)
       if (ev.subgroup) {
         if (userSettings.mySubgroup && userSettings.mySubgroup !== 'all') {
           if (ev.subgroup === userSettings.mySubgroup) {
@@ -629,12 +694,18 @@ export function parseExcelWorkbook(
 
   return {
     fileName,
-    groupName: meta.groupName || '26.М16-мо',
-    dateRangeText: meta.dateRangeText || (rawEvents[0]?.date ? `Неделя с ${rawEvents[0].date}` : 'Расписание недели'),
+    groupName: meta.groupName || 'Группа не определена',
+    dateRangeText:
+      meta.dateRangeText ||
+      (rawEvents[0]?.date && rawEvents[0].date !== '0000-00-00'
+        ? `Неделя с ${rawEvents[0].date}`
+        : 'Расписание недели'),
     totalFound: rawEvents.length,
     recognizedCount: deduplicatedEvents.length,
     totalDuplicates: duplicatesCount,
-    hasDateErrors,
+    hasDateErrors: hasDateErrors || hasYearError,
+    hasYearError,
+    yearErrorMessage,
     items: previewItems,
   };
 }
