@@ -30,10 +30,13 @@ export interface UniversalEvent {
   note?: string;
   reminder?: ReminderOption;
   source: EventSource;
+  isUserModified?: boolean; // Set to true if manually edited by the user
   importedFrom?: string; // e.g. "Расписание_26.М16-мо_07-14_сент.xlsx"
   createdAt: string;
   updatedAt: string;
   color?: string;
+  hasDateError?: boolean;
+  dateErrorMessage?: string;
 }
 
 export interface FilterSettings {
@@ -55,6 +58,7 @@ export interface ImportPreviewItem {
   reason?: string;
   isDuplicate?: boolean;
   hasExistingNote?: boolean;
+  hasDateError?: boolean;
 }
 
 export interface ImportResult {
@@ -62,7 +66,9 @@ export interface ImportResult {
   groupName?: string;
   dateRangeText?: string;
   totalFound: number;
+  recognizedCount: number;
   totalDuplicates: number;
+  hasDateErrors: boolean;
   items: ImportPreviewItem[];
 }
 

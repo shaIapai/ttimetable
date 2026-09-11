@@ -1,6 +1,20 @@
 import React, { useState } from 'react';
 import { ImportResult, ImportPreviewItem, FilterSettings } from '../types';
-import { Check, CheckSquare, Square, Filter, Sparkles, Calendar, Clock, MapPin, User, FileText, ArrowRight, X } from 'lucide-react';
+import {
+  Check,
+  CheckSquare,
+  Square,
+  Filter,
+  Sparkles,
+  Calendar,
+  Clock,
+  MapPin,
+  User,
+  FileText,
+  ArrowRight,
+  X,
+  AlertTriangle,
+} from 'lucide-react';
 import { formatFullRussianDate, parseISODate } from '../utils/dateUtils';
 import { getEventStyle } from '../utils/themeUtils';
 
@@ -20,7 +34,7 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
   onSubgroupChange,
 }) => {
   const [items, setItems] = useState<ImportPreviewItem[]>(importResult.items);
-  const [activeSubgroup, setActiveSubgroup] = useState(userSettings.mySubgroup);
+  const [activeSubgroup, setActiveSubgroup] = useState(userSettings.mySubgroup || '4');
   const [searchFilter, setSearchFilter] = useState('');
 
   // Toggle individual item
@@ -32,7 +46,9 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
 
   // Select all / Deselect all
   const selectAll = (select: boolean) => {
-    setItems((prev) => prev.map((item) => ({ ...item, selected: select })));
+    setItems((prev) =>
+      prev.map((item) => (item.hasDateError && select ? item : { ...item, selected: select }))
+    );
   };
 
   // Re-apply rules when user changes subgroup on the fly
@@ -43,25 +59,57 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
     setItems((prev) =>
       prev.map((item) => {
         const ev = item.event;
-        let match = true;
-        let reason = 'Подходит для расписания';
-
-        if (ev.subgroup) {
-          if (newSubgroup && newSubgroup !== 'all') {
-            if (ev.subgroup !== newSubgroup) {
-              match = false;
-              reason = `Другая подгруппа (${ev.subgroup})`;
-            } else {
-              reason = `Ваша подгруппа (${ev.subgroup})`;
-            }
-          }
-        } else {
-          reason = 'Общее занятие группы';
+        if (item.hasDateError) {
+          return item;
         }
 
-        if (ev.isElective && userSettings.hideElectives) {
-          match = false;
-          reason = 'Электив (скрыт правилом)';
+        let match = true;
+        let reason = '✓ Подходит для расписания';
+
+        if (ev.isElective) {
+          if (userSettings.hideElectives) {
+            match = false;
+            reason = '✕ Электив (скрыт общей настройкой)';
+          } else if (ev.subgroup) {
+            if (newSubgroup && newSubgroup !== 'all') {
+              if (ev.subgroup === newSubgroup) {
+                match = true;
+                reason = `✓ Моя подгруппа (${ev.subgroup}) [Электив]`;
+              } else {
+                match = false;
+                reason = `✕ Электив другой подгруппы (${ev.subgroup})`;
+              }
+            } else {
+              match = true;
+              reason = `✓ Электив (подгруппа ${ev.subgroup})`;
+            }
+          } else {
+            match = true;
+            reason = '✓ Общий электив группы';
+          }
+        } else {
+          if (ev.subgroup) {
+            if (newSubgroup && newSubgroup !== 'all') {
+              if (ev.subgroup === newSubgroup) {
+                match = true;
+                reason = `✓ Моя подгруппа (${ev.subgroup})`;
+              } else {
+                if (userSettings.hideOtherSubgroups) {
+                  match = false;
+                  reason = `✕ Другая подгруппа (${ev.subgroup})`;
+                } else {
+                  match = true;
+                  reason = `Подгруппа ${ev.subgroup}`;
+                }
+              }
+            } else {
+              match = true;
+              reason = `Подгруппа ${ev.subgroup}`;
+            }
+          } else {
+            match = true;
+            reason = '✓ Общее занятие группы';
+          }
         }
 
         return {
@@ -100,12 +148,12 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
               <span className="px-2 py-0.5 text-[11px] font-bold bg-blue-600 text-white rounded-md uppercase tracking-wider">
                 Предпросмотр импорта
               </span>
-              <h3 className="text-lg font-bold text-slate-900">
-                {importResult.fileName}
-              </h3>
+              <h3 className="text-lg font-bold text-slate-900">{importResult.fileName}</h3>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Группа: <strong className="text-slate-700">{importResult.groupName || '26.М16-мо'}</strong> • Период: <strong className="text-slate-700">{importResult.dateRangeText}</strong>
+              Группа:{' '}
+              <strong className="text-slate-700">{importResult.groupName || '26.М16-мо'}</strong> •
+              Период: <strong className="text-slate-700">{importResult.dateRangeText}</strong>
             </p>
           </div>
           <button
@@ -117,18 +165,38 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
           </button>
         </div>
 
-        {/* Stats and Subgroup Rule Selector */}
+        {/* Warning if date errors exist */}
+        {importResult.hasDateErrors && (
+          <div className="px-6 py-2.5 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-xs text-amber-800">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+            <span>
+              Внимание: для некоторых строк в файле дату не удалось определить автоматически.
+              Проверьте корректность расписания.
+            </span>
+          </div>
+        )}
+
+        {/* Requirement 8: Explicit statistics toolbar */}
         <div className="px-6 py-3 bg-blue-50/50 border-b border-blue-100 flex flex-wrap items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-4 text-slate-700">
+          <div className="flex flex-wrap items-center gap-3 text-slate-700">
             <div>
-              Найдено занятий в файле: <strong className="text-slate-900 font-bold">{importResult.totalFound}</strong>
+              Найдено в файле:{' '}
+              <strong className="text-slate-900 font-bold">{importResult.totalFound}</strong>
             </div>
             <div className="text-slate-300">|</div>
             <div>
-              После удаления дубликатов: <strong className="text-emerald-700 font-bold">{items.length}</strong>
-              {importResult.totalDuplicates > 0 && (
-                <span className="text-slate-500 ml-1">({importResult.totalDuplicates} дубликата отсеяно)</span>
-              )}
+              Распознано занятий:{' '}
+              <strong className="text-blue-900 font-bold">{importResult.recognizedCount}</strong>
+            </div>
+            <div className="text-slate-300">|</div>
+            <div>
+              Отсеяно дубликатов:{' '}
+              <strong className="text-amber-700 font-bold">{importResult.totalDuplicates}</strong>
+            </div>
+            <div className="text-slate-300">|</div>
+            <div>
+              Выбрано к импорту:{' '}
+              <strong className="text-emerald-700 font-bold">{selectedCount}</strong>
             </div>
           </div>
 
@@ -229,12 +297,12 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
                 {/* Event summary info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <span className="font-bold text-sm text-slate-900 truncate">
-                      {ev.title}
-                    </span>
+                    <span className="font-bold text-sm text-slate-900 truncate">{ev.title}</span>
 
                     {ev.lessonTypeName && (
-                      <span className={`px-2 py-0.5 text-[11px] font-medium rounded-sm ${style.badgeBg}`}>
+                      <span
+                        className={`px-2 py-0.5 text-[11px] font-medium rounded-sm ${style.badgeBg}`}
+                      >
                         {ev.lessonTypeName}
                       </span>
                     )}
@@ -292,6 +360,13 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
                       Сохранена существующая заметка: «{ev.note}»
                     </div>
                   )}
+
+                  {item.hasDateError && (
+                    <div className="mt-1 flex items-center gap-1 text-[11px] text-amber-700 font-medium">
+                      <AlertTriangle className="w-3 h-3 text-amber-600" />
+                      {ev.dateErrorMessage || 'Дата не определена'}
+                    </div>
+                  )}
                 </div>
 
                 {/* Right badge: Match explanation */}
@@ -320,7 +395,9 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
         {/* Footer */}
         <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
           <div className="text-xs text-slate-600 font-medium">
-            Выбрано к импорту: <strong className="text-blue-700 font-bold text-sm">{selectedCount}</strong> из {items.length} занятий
+            Выбрано к импорту:{' '}
+            <strong className="text-blue-700 font-bold text-sm">{selectedCount}</strong> из{' '}
+            {items.length} занятий
           </div>
 
           <div className="flex items-center gap-2">

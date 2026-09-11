@@ -24,6 +24,11 @@ export const EventForm: React.FC<EventFormProps> = ({
   const [date, setDate] = useState(initialDate);
   const [startTime, setStartTime] = useState(initialStartTime);
   const [endTime, setEndTime] = useState('12:40');
+
+  React.useEffect(() => {
+    setDate(initialDate);
+    setStartTime(initialStartTime);
+  }, [initialDate, initialStartTime]);
   const [lessonType, setLessonType] = useState<LessonType>('lecture');
   const [teacher, setTeacher] = useState('');
   const [location, setLocation] = useState('');

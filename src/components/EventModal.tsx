@@ -52,7 +52,11 @@ export const EventModal: React.FC<EventModalProps> = ({
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.title.trim()) return;
-    onSave(formData);
+    onSave({
+      ...formData,
+      isUserModified: true,
+      updatedAt: new Date().toISOString(),
+    });
     onClose();
   };
 

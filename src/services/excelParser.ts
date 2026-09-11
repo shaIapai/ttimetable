@@ -17,55 +17,112 @@ export function cleanText(str: unknown): string {
  */
 const RU_MONTHS: Record<string, number> = {
   января: 0,
+  январь: 0,
+  янв: 0,
   февраля: 1,
+  февраль: 1,
+  фев: 1,
   марта: 2,
+  март: 2,
+  мар: 2,
   апреля: 3,
+  апрель: 3,
+  апр: 3,
   мая: 4,
+  май: 4,
   июня: 5,
+  июнь: 5,
+  июн: 5,
   июля: 6,
+  июль: 6,
+  июл: 6,
   августа: 7,
+  август: 7,
+  авг: 7,
   сентября: 8,
+  сентябрь: 8,
+  сен: 8,
+  сент: 8,
   октября: 9,
+  октябрь: 9,
+  окт: 9,
   ноября: 10,
+  ноябрь: 10,
+  ноя: 10,
+  нояб: 10,
   декабря: 11,
+  декабрь: 11,
+  дек: 11,
 };
 
 /**
- * Parses Russian date strings such as:
- * "понедельник 7 сентября 2026", "понедельник, 7 сентября", "07.09.2026", "2026-09-07"
+ * Parses Russian date strings dynamically without a hardcoded year.
+ * Searches for explicit year in the string, or uses the dynamically detected documentYear.
  */
-export function parseDateString(raw: string, defaultYear = 2026): string | null {
+export function parseDateString(raw: unknown, documentYear?: number): string | null {
+  if (raw === null || raw === undefined) return null;
+
+  // Handle Excel Date object or serial number
+  if (raw instanceof Date && !isNaN(raw.getTime())) {
+    const y = raw.getFullYear();
+    const m = String(raw.getMonth() + 1).padStart(2, '0');
+    const d = String(raw.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  // Handle Excel numeric date (e.g. 45000+)
+  if (typeof raw === 'number' && raw > 30000 && raw < 60000) {
+    try {
+      const dateObj = XLSX.SSF.parse_date_code(raw);
+      if (dateObj && dateObj.y && dateObj.m && dateObj.d) {
+        const m = String(dateObj.m).padStart(2, '0');
+        const d = String(dateObj.d).padStart(2, '0');
+        return `${dateObj.y}-${m}-${d}`;
+      }
+    } catch {
+      // fallback to text parsing
+    }
+  }
+
   const text = cleanText(raw).toLowerCase();
   if (!text) return null;
 
-  // Check ISO format YYYY-MM-DD
-  const isoMatch = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const fallbackYear = documentYear || new Date().getFullYear();
+
+  // 1. ISO format: YYYY-MM-DD
+  const isoMatch = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
   if (isoMatch) {
     return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
   }
 
-  // Check DD.MM.YYYY or DD.MM
-  const dotMatch = text.match(/(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?/);
+  // 2. Dot format: DD.MM.YYYY or DD.MM.YY or DD.MM
+  const dotMatch = text.match(/\b(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?\b/);
   if (dotMatch) {
-    const day = dotMatch[1].padStart(2, '0');
-    const month = dotMatch[2].padStart(2, '0');
-    let year = dotMatch[3] ? parseInt(dotMatch[3], 10) : defaultYear;
-    if (year < 100) year += 2000;
-    return `${year}-${month}-${day}`;
+    const d = parseInt(dotMatch[1], 10);
+    const m = parseInt(dotMatch[2], 10);
+    if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+      let year = dotMatch[3] ? parseInt(dotMatch[3], 10) : fallbackYear;
+      if (year < 100) year += 2000;
+      const dd = String(d).padStart(2, '0');
+      const mm = String(m).padStart(2, '0');
+      return `${year}-${mm}-${dd}`;
+    }
   }
 
-  // Check textual date: e.g. "понедельник 7 сентября" or "7 сентября 2026"
+  // 3. Textual date e.g. "понедельник 7 сентября 2026", "7 сентября 2026 г.", "7 сентября", "07 сен 2025"
   for (const [monthName, monthIndex] of Object.entries(RU_MONTHS)) {
     if (text.includes(monthName)) {
-      // Find the day number preceding or near the month name
-      const regex = new RegExp(`(\\d{1,2})\\s+${monthName}(?:\\s+(\\d{4}))?`);
+      // Look for day number before or around the month name
+      const regex = new RegExp(`(?:^|[^0-9])(\\d{1,2})\\s*(?:-?[а-я]{1,2})?\\s+${monthName}(?:\\s+(\\d{4}))?`);
       const match = text.match(regex);
       if (match) {
         const day = parseInt(match[1], 10);
-        const year = match[2] ? parseInt(match[2], 10) : defaultYear;
-        const mm = String(monthIndex + 1).padStart(2, '0');
-        const dd = String(day).padStart(2, '0');
-        return `${year}-${mm}-${dd}`;
+        if (day >= 1 && day <= 31) {
+          const year = match[2] ? parseInt(match[2], 10) : fallbackYear;
+          const mm = String(monthIndex + 1).padStart(2, '0');
+          const dd = String(day).padStart(2, '0');
+          return `${year}-${mm}-${dd}`;
+        }
       }
     }
   }
@@ -74,7 +131,7 @@ export function parseDateString(raw: string, defaultYear = 2026): string | null 
 }
 
 /**
- * Normalizes time string e.g. "11:10–12:40" or "11:10 - 12:40" or "11.10-12.40"
+ * Normalizes time string e.g. "11:10–12:40", "11:10 - 12:40", "11.10–12.40"
  */
 export function parseTimeInterval(raw: string): { startTime: string; endTime: string } | null {
   const text = cleanText(raw).replace(/\./g, ':');
@@ -85,19 +142,34 @@ export function parseTimeInterval(raw: string): { startTime: string; endTime: st
     const end = match[2].padStart(5, '0');
     return { startTime: start, endTime: end };
   }
+
+  // Single time "11:10" -> assumes 90 min pair duration
+  const singleMatch = text.match(/\b(\d{1,2}:\d{2})\b/);
+  if (singleMatch) {
+    const start = singleMatch[1].padStart(5, '0');
+    const [h, m] = start.split(':').map((n) => parseInt(n, 10));
+    const endMinutes = h * 60 + m + 90;
+    const endH = String(Math.floor(endMinutes / 60) % 24).padStart(2, '0');
+    const endM = String(endMinutes % 60).padStart(2, '0');
+    return { startTime: start, endTime: `${endH}:${endM}` };
+  }
+
   return null;
 }
 
 /**
- * Extracts subgroup number from text (e.g. "Подгруппа 4", "п/г 2", "1 подгруппа")
+ * Extracts subgroup number from text (e.g. "Подгруппа 4", "п/г 2", "1 подгруппа", "4-я подгруппа")
  */
 export function extractSubgroup(text: string): string | undefined {
+  if (!text) return undefined;
   const clean = text.toLowerCase();
+
   const patterns = [
-    /подгрупп[аые]\s*([0-9]+)/i,
-    /п\/г\s*([0-9]+)/i,
-    /([0-9]+)\s*[-–]?\s*я?\s*подгрупп[аые]/i,
-    /group\s*([0-9]+)/i,
+    /подгрупп[аые]\s*(?:№\s*)?([0-9]+)/i,
+    /п\s*\/\s*г\s*(?:№\s*)?([0-9]+)/i,
+    /([0-9]+)\s*[-–—]?\s*(?:я|ая)?\s*подгрупп[аые]/i,
+    /subgroup\s*(?:№\s*)?([0-9]+)/i,
+    /group\s*(?:№\s*)?([0-9]+)/i,
   ];
 
   for (const pat of patterns) {
@@ -131,7 +203,12 @@ export function detectLessonType(text: string): { type: LessonType; label: strin
   if (lower.includes('консультация') || lower.includes('конс.')) {
     return { type: 'consultation', label: 'Консультация' };
   }
-  if (lower.includes('зачет') || lower.includes('зачёт') || lower.includes('экзамен') || lower.includes('аттестация')) {
+  if (
+    lower.includes('зачет') ||
+    lower.includes('зачёт') ||
+    lower.includes('экзамен') ||
+    lower.includes('аттестация')
+  ) {
     return { type: 'exam', label: 'Аттестация / Экзамен' };
   }
 
@@ -139,14 +216,14 @@ export function detectLessonType(text: string): { type: LessonType; label: strin
 }
 
 /**
- * Cleans the subject title by removing extraneous prefixes like "Электив. Основная траектория."
- * and trailing lesson type / subgroup markers.
+ * Cleans the subject title: removes elective/trajectory prefixes, trailing lesson types,
+ * and trailing subgroup mentions.
  */
 export function cleanSubjectTitle(raw: string): { title: string; isElective: boolean } {
   let text = cleanText(raw);
   let isElective = false;
 
-  if (/электив/i.test(text)) {
+  if (/электив|по выбору|основная траектория/i.test(text)) {
     isElective = true;
   }
 
@@ -154,31 +231,56 @@ export function cleanSubjectTitle(raw: string): { title: string; isElective: boo
   text = text.replace(/^электив[\.\s\-]+/i, '');
   text = text.replace(/^основная траектория[\.\s\-]+/i, '');
   text = text.replace(/^элективная дисциплина[\.\s\-]+/i, '');
+  text = text.replace(/^дисциплина по выбору[\.\s\-]+/i, '');
 
-  // Strip trailing lesson types if attached
-  text = text.replace(/,\s*(лекция|семинар|практическое занятие|лабораторная работа).*$/i, '');
+  // Strip trailing lesson types if attached at the end
+  text = text.replace(/,?\s*(лекция|семинар|практическое занятие|лабораторная работа|консультация)\s*$/i, '');
+
   // Strip trailing subgroup mentions
-  text = text.replace(/\s*подгруппа\s*\d+.*$/i, '');
-  text = text.replace(/\s*п\/г\s*\d+.*$/i, '');
+  text = text.replace(/,?\s*подгруппа\s*\d+\s*$/i, '');
+  text = text.replace(/,?\s*п\/г\s*\d+\s*$/i, '');
+  text = text.replace(/,?\s*\d+\s*подгруппа\s*$/i, '');
+
+  // Clean trailing commas or dashes
+  text = text.replace(/[,;:\-\s]+$/, '').trim();
 
   return {
-    title: text.trim(),
+    title: text,
     isElective,
   };
 }
 
 /**
+ * Checks whether a text is solely auxiliary metadata (e.g. "Подгруппа 4" or "практическое занятие")
+ * without a substantive subject title.
+ */
+export function isAuxiliaryText(raw: string): boolean {
+  const text = cleanText(raw).toLowerCase();
+  if (!text) return true;
+
+  // Patterns matching purely metadata rows
+  const auxiliaryOnlyPatterns = [
+    /^(?:подгрупп[аые]\s*\d+|п\/г\s*\d+|\d+\s*подгруппа)$/i,
+    /^(?:лекция|семинар|практическое занятие|лабораторная работа|консультация)$/i,
+    /^(?:практическое занятие|семинар|лекция)\s*,?\s*(?:подгрупп[аые]\s*\d+|п\/г\s*\d+)?$/i,
+    /^(?:подгрупп[аые]\s*\d+|п\/г\s*\d+)\s*,?\s*(?:практическое занятие|семинар|лекция)?$/i,
+    /^(?:основная траектория|электив)$/i,
+  ];
+
+  return auxiliaryOnlyPatterns.some((pattern) => pattern.test(text));
+}
+
+/**
  * Extracts room number and full address from location string
- * e.g., "Смольный проезд, д. 1, лит. Б, 138" -> location: "138", address: "Смольный проезд, д. 1, лит. Б"
  */
 export function parseLocation(raw: string): { location: string; address: string } {
   const text = cleanText(raw);
   if (!text) return { location: '', address: '' };
 
-  // Check if there is an explicit auditorium number, e.g. "ауд. 138", "комн. 204", "138"
-  const audMatch = text.match(/(?:ауд(?:итория)?\.?\s*|комн(?:ата)?\.?\s*|пом(?:ещение)?\.?\s*)?([0-9]+[а-яА-Яa-zA-Z\-]*)/);
-  
-  // Look for room at the end or after comma
+  const audMatch = text.match(
+    /(?:ауд(?:итория)?\.?\s*|комн(?:ата)?\.?\s*|пом(?:ещение)?\.?\s*)?([0-9]+[а-яА-Яa-zA-Z\-]*)/
+  );
+
   const parts = text.split(',').map((s) => s.trim());
   let location = '';
   let address = text;
@@ -199,21 +301,91 @@ export function parseLocation(raw: string): { location: string; address: string 
 }
 
 /**
- * Creates unique signature for duplicate detection
- * (same date, time, title, room, teacher)
+ * Creates a stable deterministic identity key for duplicate detection and re-import matching.
+ * Implements requirement 9:
+ * Accounts for:
+ * 1. date
+ * 2. time (startTime - endTime)
+ * 3. title (normalized)
+ * 4. lessonType (normalized)
+ * 5. subgroup (normalized)
  */
 export function createEventSignature(event: Partial<UniversalEvent>): string {
-  const d = event.date || '';
-  const st = event.startTime || '';
-  const et = event.endTime || '';
-  const title = (event.title || '').toLowerCase().trim();
-  const room = (event.location || '').toLowerCase().trim();
-  const teacher = (event.teacher || '').toLowerCase().trim();
-  return `${d}|${st}-${et}|${title}|${room}|${teacher}`;
+  const d = (event.date || '').trim();
+  const st = (event.startTime || '').trim();
+  const et = (event.endTime || '').trim();
+  const title = (event.title || '').toLowerCase().trim().replace(/\s+/g, ' ');
+  const lessonType = (event.lessonType || 'other').toLowerCase().trim();
+  const subgroup = (event.subgroup || '').toLowerCase().trim();
+  return `${d}|${st}-${et}|${title}|${lessonType}|${subgroup}`;
 }
 
 /**
- * Parses XLSX binary / arrayBuffer into structured events
+ * Scans the worksheet for document-level metadata:
+ * - detects academic group name (e.g. "26.М16-мо")
+ * - detects year from headers or dates (e.g. 2026, 2025, 2024)
+ * - detects date range text (e.g. "7 сентября 2026 – 14 сентября 2026")
+ */
+function scanDocumentMetadata(rawRows: unknown[][]): {
+  groupName: string;
+  detectedYear?: number;
+  dateRangeText: string;
+} {
+  let groupName = '';
+  let detectedYear: number | undefined = undefined;
+  let dateRangeText = '';
+
+  const inspectRowCount = Math.min(25, rawRows.length);
+  for (let r = 0; r < inspectRowCount; r++) {
+    const rowStr = rawRows[r].map(cleanText).join(' ');
+
+    // Group name pattern: e.g. "26.М16-мо" or "21.Б01"
+    const groupMatch = rowStr.match(/(\d{2}\.[а-яА-Яa-zA-Z0-9\-]+)/);
+    if (groupMatch && !groupName) {
+      groupName = groupMatch[1];
+    }
+
+    // Date range pattern: e.g. "07.09.2026 - 13.09.2026" or "7 сентября ... 13 сентября"
+    const rangeMatch = rowStr.match(
+      /(\d{1,2}\s+[а-яА-Я]+\s*(?:\d{4})?\s*[-–—]\s*\d{1,2}\s+[а-яА-Я]+\s*(?:\d{4})?)/i
+    );
+    if (rangeMatch && !dateRangeText) {
+      dateRangeText = rangeMatch[1];
+    }
+
+    // Search for 4-digit year (2020 - 2035)
+    const yearMatch = rowStr.match(/\b(202[0-9]|203[0-5])\b/);
+    if (yearMatch && !detectedYear) {
+      detectedYear = parseInt(yearMatch[1], 10);
+    }
+  }
+
+  // If no year found in header, check date cells across the first 40 rows
+  if (!detectedYear) {
+    for (let r = 0; r < Math.min(40, rawRows.length); r++) {
+      const row = rawRows[r];
+      for (const cell of row) {
+        const text = cleanText(cell);
+        const yMatch = text.match(/\b(202[0-9]|203[0-5])\b/);
+        if (yMatch) {
+          detectedYear = parseInt(yMatch[1], 10);
+          break;
+        }
+      }
+      if (detectedYear) break;
+    }
+  }
+
+  return {
+    groupName,
+    detectedYear,
+    dateRangeText,
+  };
+}
+
+/**
+ * Parses XLSX binary into structured events with dynamic date parsing,
+ * multi-row subgroup handling, and rule matching.
  */
 export function parseExcelWorkbook(
   data: ArrayBuffer | Uint8Array,
@@ -225,37 +397,25 @@ export function parseExcelWorkbook(
   const firstSheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[firstSheetName];
 
-  // Convert to array of rows
+  // Convert to 2D array of rows
   const rawRows = XLSX.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, defval: '' });
 
-  let groupName = '';
-  let dateRangeText = '';
+  // 1. Scan document metadata (Group name, document year, date range)
+  const meta = scanDocumentMetadata(rawRows);
+  const docYear = meta.detectedYear || new Date().getFullYear();
+
   let lastKnownDate: string | null = null;
   const rawEvents: UniversalEvent[] = [];
+  let hasDateErrors = false;
 
-  // Inspect first 10 rows for group name and date range
-  for (let r = 0; r < Math.min(10, rawRows.length); r++) {
-    const rowStr = rawRows[r].map(cleanText).join(' ');
-    const groupMatch = rowStr.match(/(\d{2}\.[а-яА-Яa-zA-Z0-9\-]+)/);
-    if (groupMatch && !groupName) {
-      groupName = groupMatch[1];
-    }
-    const rangeMatch = rowStr.match(/(\d{1,2}\s+[а-яА-Я]+\s+\d{4}\s*[-–—]\s*\d{1,2}\s+[а-яА-Я]+\s+\d{4})/i);
-    if (rangeMatch && !dateRangeText) {
-      dateRangeText = rangeMatch[1];
-    }
-  }
-
-  // Find header row or column indices
-  // Standard columns: Дата | Время | Название | Места проведения | Преподаватели
+  // 2. Identify column indices dynamically
   let dateCol = 0;
   let timeCol = 1;
   let titleCol = 2;
   let locationCol = 3;
   let teacherCol = 4;
 
-  // Let's detect column indices by checking for headers
-  for (let r = 0; r < Math.min(15, rawRows.length); r++) {
+  for (let r = 0; r < Math.min(20, rawRows.length); r++) {
     const row = rawRows[r];
     for (let c = 0; c < row.length; c++) {
       const val = cleanText(row[c]).toLowerCase();
@@ -267,77 +427,117 @@ export function parseExcelWorkbook(
     }
   }
 
-  // Iterate rows
+  // 3. Row by row processing
   for (let r = 0; r < rawRows.length; r++) {
     const row = rawRows[r];
     if (!row || row.length === 0) continue;
 
-    const dateCell = cleanText(row[dateCol]);
+    const dateCell = row[dateCol];
     const timeCell = cleanText(row[timeCol]);
     const titleCell = cleanText(row[titleCol]);
     const locationCell = cleanText(row[locationCol]);
     const teacherCell = cleanText(row[teacherCol]);
 
-    // Check if this row contains a new date definition
-    const parsedDate = parseDateString(dateCell);
+    // Check if this row introduces a new date
+    const parsedDate = parseDateString(dateCell, docYear);
     if (parsedDate) {
       lastKnownDate = parsedDate;
     }
 
-    // Time cell check: is this a lesson row?
+    // Check if this row is a continuation row for the previous event!
+    // Condition: No valid time interval OR title is purely auxiliary metadata (e.g. "Подгруппа 4")
     const parsedTime = parseTimeInterval(timeCell);
-    if (!parsedTime) {
-      // Row might be a header or day separator without time
+
+    if (!parsedTime || isAuxiliaryText(titleCell)) {
+      if (rawEvents.length > 0) {
+        const lastEvent = rawEvents[rawEvents.length - 1];
+        const combinedAux = `${titleCell} ${locationCell} ${teacherCell}`;
+        const sub = extractSubgroup(combinedAux);
+        if (sub && !lastEvent.subgroup) {
+          lastEvent.subgroup = sub;
+        }
+        if (isAuxiliaryText(titleCell)) {
+          const lType = detectLessonType(titleCell);
+          if (lType.type !== 'other') {
+            lastEvent.lessonType = lType.type;
+            lastEvent.lessonTypeName = lType.label;
+          }
+        }
+        if (!lastEvent.teacher && teacherCell) {
+          lastEvent.teacher = cleanText(teacherCell);
+        }
+        if (!lastEvent.location && locationCell) {
+          const loc = parseLocation(locationCell);
+          lastEvent.location = loc.location;
+          lastEvent.address = loc.address;
+        }
+      }
       continue;
     }
 
-    // If we have a time but no date yet, skip or use default
-    const eventDate = lastKnownDate || '2026-09-07';
+    // This is a legitimate lesson row with a valid time interval
+    let eventDate = lastKnownDate;
+    let rowHasDateError = false;
+    let dateErrorMessage: string | undefined = undefined;
 
-    // Subgroup extraction
-    const combinedText = `${titleCell} ${locationCell} ${teacherCell}`;
-    const subgroup = extractSubgroup(combinedText);
+    if (!eventDate) {
+      // Date could not be determined!
+      hasDateErrors = true;
+      rowHasDateError = true;
+      dateErrorMessage = 'Не удалось определить дату занятия из файла';
+      // Use today's ISO date as placeholder so it can be viewed, but flag the error
+      eventDate = new Date().toISOString().split('T')[0];
+    }
 
-    // Clean title and elective
+    // Subgroup extraction from all cells of this row
+    const combinedRowText = `${titleCell} ${locationCell} ${teacherCell}`;
+    const subgroup = extractSubgroup(combinedRowText);
+
+    // Clean title and elective flag
     const { title, isElective } = cleanSubjectTitle(titleCell);
-    if (!title) continue;
+    if (!title && !isAuxiliaryText(titleCell)) continue;
 
-    // Lesson type
-    const { type: lessonType, label: lessonTypeName } = detectLessonType(`${titleCell} ${locationCell}`);
+    // Detect lesson type
+    const { type: lessonType, label: lessonTypeName } = detectLessonType(
+      `${titleCell} ${locationCell}`
+    );
 
     // Parse location & address
     const { location, address } = parseLocation(locationCell);
 
-    // Existing note retention
-    const signature = `${eventDate}|${parsedTime.startTime}-${parsedTime.endTime}|${title.toLowerCase()}`;
-    const existingNote = existingNotesMap[signature] || '';
+    // Check existing note by deterministic signature
+    const noteSignature = `${eventDate}|${parsedTime.startTime}-${parsedTime.endTime}|${title.toLowerCase().trim()}`;
+    const existingNote = existingNotesMap[noteSignature] || '';
 
     const newEvent: UniversalEvent = {
       id: `imp-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`,
-      title,
+      title: title || 'Учебное занятие',
       date: eventDate,
       startTime: parsedTime.startTime,
       endTime: parsedTime.endTime,
       eventType: 'pair',
       lessonType,
       lessonTypeName,
-      teacher: cleanText(teacherCell),
-      location,
-      address,
+      teacher: cleanText(teacherCell) || undefined,
+      location: location || undefined,
+      address: address || undefined,
       subgroup,
       isElective,
-      note: existingNote,
+      note: existingNote || undefined,
       reminder: 'none',
       source: 'imported',
+      isUserModified: false,
       importedFrom: fileName,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      hasDateError: rowHasDateError,
+      dateErrorMessage,
     };
 
     rawEvents.push(newEvent);
   }
 
-  // Deduplication
+  // 4. Deduplication
   const seenSignatures = new Set<string>();
   const deduplicatedEvents: UniversalEvent[] = [];
   let duplicatesCount = 0;
@@ -352,54 +552,89 @@ export function parseExcelWorkbook(
     }
   }
 
-  // Build Preview Items with rules matching
+  // 5. Build Preview Items with rules matching (Requirement 6 & 7)
   const previewItems: ImportPreviewItem[] = deduplicatedEvents.map((ev) => {
-    let matchesRules = true;
-    let reason = 'Подходит для расписания';
-
-    // Rule 1: Subgroups
-    if (ev.subgroup) {
-      if (userSettings.mySubgroup && userSettings.mySubgroup !== 'all') {
-        if (ev.subgroup !== userSettings.mySubgroup) {
-          if (userSettings.hideOtherSubgroups) {
-            matchesRules = false;
-            reason = `Другая подгруппа (${ev.subgroup})`;
-          }
-        } else {
-          reason = `Ваша подгруппа (${ev.subgroup})`;
-        }
-      }
-    } else {
-      reason = 'Общее занятие группы';
+    if (ev.hasDateError) {
+      return {
+        id: ev.id,
+        event: ev,
+        selected: false,
+        matchesUserRules: false,
+        reason: '✕ Ошибка: дата не определена',
+        hasDateError: true,
+      };
     }
 
-    // Rule 2: Electives of other subgroups or all electives
+    let matchesRules = true;
+    let reason = '✓ Подходит для расписания';
+
     if (ev.isElective) {
+      // Elective logic (Requirement 7)
       if (userSettings.hideElectives) {
         matchesRules = false;
-        reason = 'Электив (скрыт правилом)';
-      } else if (ev.subgroup && userSettings.mySubgroup && ev.subgroup !== userSettings.mySubgroup && userSettings.hideOtherElectives) {
-        matchesRules = false;
-        reason = `Электив другой подгруппы (${ev.subgroup})`;
+        reason = '✕ Электив (скрыт общей настройкой)';
+      } else if (ev.subgroup) {
+        if (userSettings.mySubgroup && userSettings.mySubgroup !== 'all') {
+          if (ev.subgroup === userSettings.mySubgroup) {
+            matchesRules = true;
+            reason = `✓ Моя подгруппа (${ev.subgroup}) [Электив]`;
+          } else {
+            matchesRules = false;
+            reason = `✕ Электив другой подгруппы (${ev.subgroup})`;
+          }
+        } else {
+          matchesRules = true;
+          reason = `✓ Электив (подгруппа ${ev.subgroup})`;
+        }
+      } else {
+        matchesRules = true;
+        reason = '✓ Общий электив группы';
+      }
+    } else {
+      // Standard pair logic (Requirement 6)
+      if (ev.subgroup) {
+        if (userSettings.mySubgroup && userSettings.mySubgroup !== 'all') {
+          if (ev.subgroup === userSettings.mySubgroup) {
+            matchesRules = true;
+            reason = `✓ Моя подгруппа (${ev.subgroup})`;
+          } else {
+            if (userSettings.hideOtherSubgroups) {
+              matchesRules = false;
+              reason = `✕ Другая подгруппа (${ev.subgroup})`;
+            } else {
+              matchesRules = true;
+              reason = `Подгруппа ${ev.subgroup}`;
+            }
+          }
+        } else {
+          matchesRules = true;
+          reason = `Подгруппа ${ev.subgroup}`;
+        }
+      } else {
+        matchesRules = true;
+        reason = '✓ Общее занятие группы';
       }
     }
 
     return {
       id: ev.id,
       event: ev,
-      selected: matchesRules, // pre-select if matches user rules
+      selected: matchesRules,
       matchesUserRules: matchesRules,
       reason,
       hasExistingNote: Boolean(ev.note),
+      hasDateError: false,
     };
   });
 
   return {
     fileName,
-    groupName: groupName || '26.М16-мо',
-    dateRangeText: dateRangeText || '7 сентября 2026 – 14 сентября 2026',
+    groupName: meta.groupName || '26.М16-мо',
+    dateRangeText: meta.dateRangeText || (rawEvents[0]?.date ? `Неделя с ${rawEvents[0].date}` : 'Расписание недели'),
     totalFound: rawEvents.length,
+    recognizedCount: deduplicatedEvents.length,
     totalDuplicates: duplicatesCount,
+    hasDateErrors,
     items: previewItems,
   };
 }

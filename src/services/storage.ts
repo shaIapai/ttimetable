@@ -1,11 +1,11 @@
 import { UniversalEvent, FilterSettings } from '../types';
 import { getInitialDemoEvents } from './demoData';
+import { createEventSignature } from './excelParser';
 
 const STORAGE_KEYS = {
   EVENTS: 'student_schedule_events_v1',
   SETTINGS: 'student_schedule_settings_v1',
   NOTES_MAP: 'student_schedule_notes_map_v1',
-  HAS_INITIALIZED: 'student_schedule_initialized_v1',
 };
 
 export const DEFAULT_FILTER_SETTINGS: FilterSettings = {
@@ -19,14 +19,11 @@ export const DEFAULT_FILTER_SETTINGS: FilterSettings = {
   timeRangeEnd: 20,
 };
 
-/**
- * Creates note signature to preserve user notes across Excel re-imports
- */
-export function getNoteSignature(event: Partial<UniversalEvent>): string {
-  const date = event.date || '';
-  const time = event.startTime || '';
-  const title = (event.title || '').trim().toLowerCase();
-  return `${date}|${time}|${title}`;
+export interface MergeImportResult {
+  events: UniversalEvent[];
+  addedCount: number;
+  updatedCount: number;
+  preservedModificationsCount: number;
 }
 
 export class StorageService {
@@ -89,19 +86,10 @@ export class StorageService {
   }
 
   /**
-   * Load events from localStorage. On first launch, initializes with demo events
+   * Load events from localStorage.
    */
   static getEvents(): UniversalEvent[] {
     try {
-      const initialized = localStorage.getItem(STORAGE_KEYS.HAS_INITIALIZED);
-      if (!initialized) {
-        // First run initialization with realistic timetable 26.М16-мо
-        const demoEvents = getInitialDemoEvents();
-        this.saveEvents(demoEvents);
-        localStorage.setItem(STORAGE_KEYS.HAS_INITIALIZED, 'true');
-        return demoEvents;
-      }
-
       const data = localStorage.getItem(STORAGE_KEYS.EVENTS);
       if (data) {
         return JSON.parse(data);
@@ -123,7 +111,7 @@ export class StorageService {
       const map = this.getNotesMap();
       events.forEach((ev) => {
         if (ev.note) {
-          const sig = getNoteSignature(ev);
+          const sig = createEventSignature(ev);
           map[sig] = ev.note;
         }
       });
@@ -131,6 +119,78 @@ export class StorageService {
     } catch (e) {
       console.error('Failed to save events to localStorage', e);
     }
+  }
+
+  /**
+   * Merges imported events into the existing schedule:
+   * 1. Preserves already existing weeks (e.g. week 1 + week 2).
+   * 2. If an event is re-imported, does NOT create a duplicate.
+   * 3. Preserves user modifications (notes, reminders, manual edits).
+   */
+  static mergeImportedEvents(incomingEvents: UniversalEvent[]): MergeImportResult {
+    const existingEvents = this.getEvents();
+    const existingMap = new Map<string, UniversalEvent>();
+
+    // Index existing events by their deterministic signature
+    existingEvents.forEach((ev) => {
+      const key = createEventSignature(ev);
+      existingMap.set(key, ev);
+    });
+
+    let addedCount = 0;
+    let updatedCount = 0;
+    let preservedModificationsCount = 0;
+
+    const resultEvents = [...existingEvents];
+    const notesMap = this.getNotesMap();
+
+    incomingEvents.forEach((incoming) => {
+      const key = createEventSignature(incoming);
+      const existing = existingMap.get(key);
+
+      if (existing) {
+        // Event already exists in schedule!
+        if (existing.isUserModified) {
+          // The student customized this event manually; do NOT overwrite!
+          preservedModificationsCount++;
+        } else {
+          // Update details from Excel while preserving notes and reminders
+          const index = resultEvents.findIndex((e) => e.id === existing.id);
+          if (index >= 0) {
+            resultEvents[index] = {
+              ...incoming,
+              id: existing.id,
+              note: existing.note || incoming.note || notesMap[key],
+              reminder:
+                existing.reminder && existing.reminder !== 'none'
+                  ? existing.reminder
+                  : incoming.reminder,
+              isUserModified: false,
+              updatedAt: new Date().toISOString(),
+            };
+            updatedCount++;
+          }
+        }
+      } else {
+        // New event (either a new week, e.g. 14-20 сентября, or an added class)
+        const noteFromMap = notesMap[key];
+        if (noteFromMap && !incoming.note) {
+          incoming.note = noteFromMap;
+        }
+        resultEvents.push(incoming);
+        existingMap.set(key, incoming);
+        addedCount++;
+      }
+    });
+
+    this.saveEvents(resultEvents);
+
+    return {
+      events: resultEvents,
+      addedCount,
+      updatedCount,
+      preservedModificationsCount,
+    };
   }
 
   /**
@@ -165,14 +225,14 @@ export class StorageService {
   }
 
   /**
-   * Clear all events (testing empty state)
+   * Clear all events (for empty state testing)
    */
   static clearAllEvents(): void {
     localStorage.setItem(STORAGE_KEYS.EVENTS, JSON.stringify([]));
   }
 
   /**
-   * Reset to initial 26.М16-мо sample schedule
+   * Load demo 26.М16-мо sample schedule
    */
   static resetToDemo(): UniversalEvent[] {
     const demo = getInitialDemoEvents();

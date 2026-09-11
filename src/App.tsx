@@ -8,7 +8,7 @@ import {
 } from './types';
 import { StorageService } from './services/storage';
 import { FilterService } from './services/filterService';
-import { getMondayOfWeek, formatISODate } from './utils/dateUtils';
+import { getMondayOfWeek, formatISODate, parseISODate } from './utils/dateUtils';
 import { Navigation } from './components/Navigation';
 import { CalendarHeader } from './components/CalendarHeader';
 import { WeekView } from './components/WeekView';
@@ -28,8 +28,21 @@ export default function App() {
   const [settings, setSettings] = useState<FilterSettings>(() => StorageService.getSettings());
 
   // 2. View & Navigation state
-  // Initial date set to 2026-09-07 (the demo period week from specification)
-  const [currentDate, setCurrentDate] = useState<Date>(() => new Date(2026, 8, 7)); // Sept 7, 2026
+  const [currentDate, setCurrentDate] = useState<Date>(() => {
+    const initialEvents = StorageService.getEvents();
+    if (initialEvents.length > 0) {
+      const todayIso = formatISODate(new Date());
+      const hasToday = initialEvents.some((e) => e.date === todayIso);
+      if (hasToday) return new Date();
+
+      const upcoming = initialEvents.find((e) => e.date >= todayIso);
+      if (upcoming) {
+        return parseISODate(upcoming.date);
+      }
+      return parseISODate(initialEvents[0].date);
+    }
+    return new Date();
+  });
   const [viewMode, setViewMode] = useState<CalendarViewMode>('week');
   const [activeTab, setActiveTab] = useState<'schedule' | 'events' | 'import' | 'settings'>('schedule');
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,7 +50,7 @@ export default function App() {
   // 3. Modals state
   const [selectedEvent, setSelectedEvent] = useState<UniversalEvent | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [addModalInitialDate, setAddModalInitialDate] = useState(formatISODate(new Date(2026, 8, 7)));
+  const [addModalInitialDate, setAddModalInitialDate] = useState(() => formatISODate(new Date()));
   const [addModalInitialTime, setAddModalInitialTime] = useState('11:10');
 
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -69,9 +82,8 @@ export default function App() {
   }, []);
 
   const handleToday = useCallback(() => {
-    // Navigate to Sept 7, 2026 if events exist in that range, or real current date
-    const septDate = new Date(2026, 8, 7);
-    setCurrentDate(septDate);
+    // Navigate to actual current computer date (Requirement 14)
+    setCurrentDate(new Date());
   }, []);
 
   const handlePrevDay = useCallback(() => {
@@ -173,31 +185,15 @@ export default function App() {
   const handleConfirmImport = (selectedItems: ImportPreviewItem[]) => {
     const newImportedEvents = selectedItems.map((item) => item.event);
 
-    // Merge with existing manual events and non-overlapping imported events
-    const existingEvents = StorageService.getEvents();
-    // Exclude existing events from the same imported date range if desired, or merge
-    const merged = [...existingEvents, ...newImportedEvents];
-
-    // Deduplicate exact matches
-    const seen = new Set<string>();
-    const deduplicated: UniversalEvent[] = [];
-    for (const ev of merged) {
-      const sig = `${ev.date}|${ev.startTime}|${ev.title.toLowerCase()}|${ev.location || ''}`;
-      if (!seen.has(sig)) {
-        seen.add(sig);
-        deduplicated.push(ev);
-      }
-    }
-
-    StorageService.saveEvents(deduplicated);
-    setEvents([...deduplicated]);
+    // Merge with existing schedule (additive import, preserves other weeks and user edits)
+    const mergeResult = StorageService.mergeImportedEvents(newImportedEvents);
+    setEvents([...mergeResult.events]);
     setImportResult(null);
 
     // Switch view to the date of first imported event
     if (newImportedEvents.length > 0) {
       const firstDate = newImportedEvents[0].date;
-      const [y, m, d] = firstDate.split('-').map((n) => parseInt(n, 10));
-      setCurrentDate(new Date(y, m - 1, d));
+      setCurrentDate(parseISODate(firstDate));
     }
   };
 
@@ -217,7 +213,9 @@ export default function App() {
     const demo = StorageService.resetToDemo();
     setEvents([...demo]);
     setSettings(StorageService.getSettings());
-    setCurrentDate(new Date(2026, 8, 7));
+    if (demo.length > 0) {
+      setCurrentDate(parseISODate(demo[0].date));
+    }
   };
 
   const handleClearAll = () => {
