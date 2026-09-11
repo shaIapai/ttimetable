@@ -1,0 +1,6 @@
+{
+  "name": "Моё расписание",
+  "description": "Личное приложение студента для удобного просмотра расписания, фильтрации подгрупп и элективов, импорта из университетских Excel-файлов и ведения заметок.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
