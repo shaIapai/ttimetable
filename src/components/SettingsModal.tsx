@@ -111,7 +111,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               Используется для автоматического отбора пар при импорте и скрытия чужих пар в календаре.
             </p>
             <div className="flex flex-wrap gap-2">
-              {['1', '2', '3', '4', 'all'].map((sg) => (
+              {['1', '2', '3', '4', '5', 'all'].map((sg) => (
                 <button
                   key={sg}
                   type="button"

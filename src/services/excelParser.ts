@@ -7,7 +7,7 @@ import { UniversalEvent, LessonType, ImportPreviewItem, ImportResult, FilterSett
 export function cleanText(str: unknown): string {
   if (str === null || str === undefined) return '';
   return String(str)
-    .replace(/[\r\n]+/g, ' ')
+    .replace(/[\r\n\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000\uFEFF]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -239,18 +239,29 @@ export function detectLessonType(text: string): { type: LessonType; label: strin
  * Cleans the subject title: removes trailing lesson types and trailing subgroup mentions,
  * but PRESERVES the full course name (including "Электив. Основная траектория." if present in official title).
  */
-export function cleanSubjectTitle(raw: string): { title: string; isElective: boolean } {
+export function cleanSubjectTitle(raw: string): { title: string; isElective: boolean; embeddedTeacher?: string } {
   const original = String(raw || '');
   const isElective = /электив|по выбору|основная траектория/i.test(original);
 
   // Normalize newlines and whitespace
-  let text = original.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+  let text = cleanText(original);
+
+  // Check if there is an embedded teacher in title (e.g. "(доц. Барышников Д. Н.)" or ", доц. Барышников Д. Н.")
+  let embeddedTeacher: string | undefined = undefined;
+  const embeddedTeacherMatch = text.match(
+    /(?:,\s*|\s*\(\s*|\s*\/\s*|\s*преподаватель:\s*)(?:(?:преп(?:одаватель)?|доц(?:ент)?|проф(?:ессор)?|ст(?:\.|\s+)?преп)?\.?\s*)?([А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.?)(?:\s*\))?/i
+  );
+  if (embeddedTeacherMatch && embeddedTeacherMatch[1]) {
+    embeddedTeacher = embeddedTeacherMatch[1].trim();
+    // Remove the embedded teacher part from text
+    text = text.replace(embeddedTeacherMatch[0], ' ').trim();
+  }
 
   // Strip subgroup references from title (e.g. "Подгруппа 4", "п/г 2", "4 подгруппа")
-  text = text.replace(/,?\s*(?:подгрупп[аые]\s*№?\s*\d+|п\s*\/\s*г\s*№?\s*\d+|\d+\s*[-–—]?(?:я|ая)?\s*подгрупп[аые])\b/gi, '');
+  text = text.replace(/,?\s*(?:подгрупп[аые]\s*№?\s*\d+|п\s*\/\s*г\s*№?\s*\d+|\d+\s*[-–—]?(?:я|ая)?\s*подгрупп[аые])(?:\s*|$)/gi, ' ');
 
   // Strip trailing lesson types if attached at the end (e.g. ", практическое занятие", ", семинар")
-  text = text.replace(/,?\s*(?:практическое занятие|семинар|лекция|лабораторная работа|консультация|зачет|зачёт|экзамен)\b\s*$/gi, '');
+  text = text.replace(/,?\s*(?:практическое занятие|семинар|лекция|лабораторная работа|консультация|зачет|зачёт|экзамен)\s*$/gi, '');
 
   // Strip parenthetical lesson types at end (e.g. "(практическое занятие)")
   text = text.replace(/\s*\((?:практическое занятие|семинар|лекция|лабораторная работа|консультация|зачет|зачёт|экзамен)\)\s*$/gi, '');
@@ -261,6 +272,7 @@ export function cleanSubjectTitle(raw: string): { title: string; isElective: boo
   return {
     title: text,
     isElective,
+    embeddedTeacher,
   };
 }
 
@@ -332,6 +344,299 @@ export function createEventSignature(event: Partial<UniversalEvent>): string {
   const lessonType = (event.lessonType || 'other').toLowerCase().trim();
   const subgroup = (event.subgroup || '').toLowerCase().trim();
   return `${d}|${st}-${et}|${title}|${lessonType}|${subgroup}`;
+}
+
+// Discipline and course subject keywords used to prevent false positive teacher matching
+const DISCIPLINE_KEYWORDS = [
+  'проблем',
+  'теори',
+  'международн',
+  'политик',
+  'истори',
+  'дипломат',
+  'безопасност',
+  'эконом',
+  'исследован',
+  'анализ',
+  'язык',
+  'литератур',
+  'философ',
+  'математик',
+  'информатик',
+  'технолог',
+  'систем',
+  'управлен',
+  'введен',
+  'основ',
+  'культур',
+  'право',
+  'юриспруд',
+  'семинар',
+  'лекци',
+  'практик',
+  'лабораторн',
+  'консультац',
+  'электив',
+  'траектори',
+  'дисциплин',
+  'подгрупп',
+];
+
+const TEACHER_TITLE_REGEX =
+  /(?:^|[\s,;(/])(?:проф(?:ессор)?|доц(?:ент)?|ст(?:\.|\s+)?преп(?:одаватель)?|преп(?:одаватель)?|преподователь|асс(?:истент)?|зав(?:\.|\s+)?каф(?:едрой)?|академик|д(?:\.[а-яё]+)?\.?\s*н\.?|к(?:\.[а-яё]+)?\.?\s*н\.?)(?:\.|\s|$)/i;
+
+const RUSSIAN_SURNAME_INITIALS_REGEX =
+  /(?:^|[\s,;(/])([А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s+[А-ЯЁ]\.\s*[А-ЯЁ]\.?)(?:$|[\s,;)/])/;
+
+const RUSSIAN_INITIALS_SURNAME_REGEX =
+  /(?:^|[\s,;(/])([А-ЯЁ]\.\s*[А-ЯЁ]\.?\s+[А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?)(?:$|[\s,;)/])/;
+
+const RUSSIAN_FULL_3NAME_REGEX =
+  /(?:^|[\s,;(/])([А-ЯЁ][а-яё]+(?:-[А-ЯЁ][а-яё]+)?\s+[А-ЯЁ][а-яё]+\s+[А-ЯЁ][а-яё]*(?:ович|евич|ич|овна|евна|ична|инична))(?:$|[\s,;)/])/i;
+
+/**
+ * Accurately determines if a given text string represents a teacher name or academic rank.
+ */
+export function isLikelyTeacher(raw: string): boolean {
+  const text = cleanText(raw);
+  if (!text || text.length < 3 || text.length > 80) return false;
+  const lower = text.toLowerCase();
+
+  // If it's solely a room number or address without explicit teacher prefix
+  if (
+    /(?:^|[\s,])(?:ауд\.?\s*\d+|д\.\s*\d+|лит\.|комн|каб\.?\s*\d+)/i.test(lower) &&
+    !TEACHER_TITLE_REGEX.test(text)
+  ) {
+    return false;
+  }
+
+  const hasTeacherPrefix = TEACHER_TITLE_REGEX.test(text);
+  const hasDisciplineWord = DISCIPLINE_KEYWORDS.some((kw) => lower.includes(kw));
+
+  // If it contains discipline/course terms and does not have an explicit teacher prefix
+  if (hasDisciplineWord && !hasTeacherPrefix) {
+    return false;
+  }
+
+  if (hasTeacherPrefix) return true;
+  if (RUSSIAN_SURNAME_INITIALS_REGEX.test(text) || RUSSIAN_INITIALS_SURNAME_REGEX.test(text)) return true;
+  if (RUSSIAN_FULL_3NAME_REGEX.test(text)) return true;
+
+  return false;
+}
+
+/**
+ * Checks if a candidate string is NOT a teacher (e.g. it is the subject title, prefix of subject,
+ * discipline description, or purely lesson metadata).
+ */
+export function isNotTeacher(raw: string, subjectTitle?: string): boolean {
+  const text = cleanText(raw);
+  if (!text) return true;
+  const lowerCandidate = text.toLowerCase();
+
+  // 1. Check against subject title
+  if (subjectTitle) {
+    const lowerTitle = cleanText(subjectTitle).toLowerCase();
+    if (
+      lowerCandidate === lowerTitle ||
+      lowerTitle.startsWith(lowerCandidate) ||
+      lowerCandidate.startsWith(lowerTitle)
+    ) {
+      return true;
+    }
+    // Substring with substantial length (>= 12 chars)
+    if (lowerCandidate.length >= 12 && lowerTitle.includes(lowerCandidate)) {
+      return true;
+    }
+    if (lowerTitle.length >= 12 && lowerCandidate.includes(lowerTitle)) {
+      return true;
+    }
+
+    // Word overlap test: if >= 40% of words (length >= 4) in candidate are in title
+    const candidateWords = lowerCandidate
+      .replace(/[^а-яёa-z0-9\s]/g, ' ')
+      .split(/\s+/)
+      .filter((w) => w.length >= 4);
+
+    if (candidateWords.length >= 2) {
+      const matchCount = candidateWords.filter((w) => lowerTitle.includes(w)).length;
+      if (matchCount / candidateWords.length >= 0.4) {
+        return true;
+      }
+    }
+  }
+
+  // 2. Purely lesson types / metadata
+  if (
+    /^(?:семинар|лекция|практическое занятие|лабораторная работа|консультация|зачет|зачёт|экзамен|электив|траектория|подгруппа\s*\d+)$/i.test(
+      text
+    )
+  ) {
+    return true;
+  }
+
+  // 3. Contains discipline keywords and NO teacher prefixes or initials
+  const hasDisciplineWord = DISCIPLINE_KEYWORDS.some((kw) => lowerCandidate.includes(kw));
+  const hasTeacherPrefix = TEACHER_TITLE_REGEX.test(text);
+  const hasInitials =
+    RUSSIAN_SURNAME_INITIALS_REGEX.test(text) || RUSSIAN_INITIALS_SURNAME_REGEX.test(text);
+
+  if (hasDisciplineWord && !hasTeacherPrefix && !hasInitials) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Searches across all cells of a row for a cell that represents a genuine teacher.
+ */
+export function findTeacherInRow(
+  row: unknown[],
+  subjectTitle: string,
+  excludeCols: number[] = []
+): { teacher: string; colIndex: number } | null {
+  if (!row || !Array.isArray(row)) return null;
+
+  for (let c = 0; c < row.length; c++) {
+    if (excludeCols.includes(c)) continue;
+    const cellVal = cleanText(row[c]);
+    if (!cellVal) continue;
+
+    if (isLikelyTeacher(cellVal) && !isNotTeacher(cellVal, subjectTitle)) {
+      return { teacher: cellVal, colIndex: c };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Detects whether a column header cell signifies the teacher/instructor column.
+ */
+export function isTeacherHeader(cellText: string): boolean {
+  const norm = cleanText(cellText).toLowerCase().replace(/[\s\.\-_/]+/g, '');
+  if (!norm) return false;
+
+  // Never match discipline or location headers as teacher
+  if (
+    norm.includes('название') ||
+    norm.includes('дисциплин') ||
+    norm.includes('предмет') ||
+    norm.includes('кратк') ||
+    norm.includes('мест') ||
+    norm.includes('ауд') ||
+    norm.includes('адрес')
+  ) {
+    return false;
+  }
+
+  if (norm.includes('фио') || norm.includes('fio')) return true;
+  if (
+    /(?:препод|педагог|лектор|учител|ведящ|teacher|educator|lecturer|professor|instructor|staff|ппс)/i.test(
+      cellText
+    )
+  ) {
+    return true;
+  }
+  if (/(?:^|[^а-яА-ЯёЁa-zA-Z0-9])преп(?:\.|\b|[^а-яА-ЯёЁa-zA-Z0-9]|$)/i.test(cellText)) {
+    return true;
+  }
+  return false;
+}
+
+export function isDateHeader(cellText: string): boolean {
+  const norm = cleanText(cellText).toLowerCase().replace(/[\s\.\-_/]+/g, '');
+  if (!norm) return false;
+  return (
+    norm.includes('дата') ||
+    norm.includes('день') ||
+    norm.includes('число') ||
+    /(?:^|[^а-яА-ЯёЁa-zA-Z0-9])(?:date|day)(?:[^а-яА-ЯёЁa-zA-Z0-9]|$)/i.test(cellText)
+  );
+}
+
+export function isTimeHeader(cellText: string): boolean {
+  const norm = cleanText(cellText).toLowerCase().replace(/[\s\.\-_/]+/g, '');
+  if (!norm) return false;
+  return (
+    norm.includes('время') ||
+    norm.includes('часы') ||
+    norm.includes('пара') ||
+    norm.includes('начало') ||
+    /(?:^|[^а-яА-ЯёЁa-zA-Z0-9])(?:time|period)(?:[^а-яА-ЯёЁa-zA-Z0-9]|$)/i.test(cellText)
+  );
+}
+
+export function isTitleHeader(cellText: string): boolean {
+  const norm = cleanText(cellText).toLowerCase().replace(/[\s\.\-_/]+/g, '');
+  if (!norm) return false;
+  if (norm.includes('кратк') || norm.includes('сокращ') || norm.includes('short')) return false;
+  if (isTeacherHeader(cellText)) return false;
+  return (
+    norm.includes('название') ||
+    norm.includes('предмет') ||
+    norm.includes('дисциплин') ||
+    norm.includes('курс') ||
+    norm.includes('тема') ||
+    /(?:subject|discipline|course|title)/i.test(cellText)
+  );
+}
+
+export function isLocationHeader(cellText: string): boolean {
+  const norm = cleanText(cellText).toLowerCase().replace(/[\s\.\-_/]+/g, '');
+  if (!norm) return false;
+  if (isTeacherHeader(cellText)) return false;
+  return (
+    norm.includes('мест') ||
+    norm.includes('ауд') ||
+    norm.includes('адрес') ||
+    norm.includes('помещен') ||
+    norm.includes('корпус') ||
+    /(?:location|room|place|auditorium)/i.test(cellText)
+  );
+}
+
+interface HeaderScores {
+  score: number;
+  dateCol?: number;
+  timeCol?: number;
+  titleCol?: number;
+  locationCol?: number;
+  teacherCol?: number;
+}
+
+function scoreHeaderRow(row: unknown[]): HeaderScores {
+  let score = 0;
+  let dateCol: number | undefined;
+  let timeCol: number | undefined;
+  let titleCol: number | undefined;
+  let locationCol: number | undefined;
+  let teacherCol: number | undefined;
+
+  for (let c = 0; c < row.length; c++) {
+    const val = cleanText(row[c]);
+    if (!val) continue;
+
+    if (isTeacherHeader(val) && teacherCol === undefined) {
+      teacherCol = c;
+      score += 3;
+    } else if (isDateHeader(val) && dateCol === undefined) {
+      dateCol = c;
+      score += 2;
+    } else if (isTimeHeader(val) && timeCol === undefined) {
+      timeCol = c;
+      score += 2;
+    } else if (isTitleHeader(val) && titleCol === undefined) {
+      titleCol = c;
+      score += 2;
+    } else if (isLocationHeader(val) && locationCol === undefined) {
+      locationCol = c;
+      score += 2;
+    }
+  }
+
+  return { score, dateCol, timeCol, titleCol, locationCol, teacherCol };
 }
 
 /**
@@ -464,22 +769,92 @@ export function parseExcelWorkbook(
   const rawEvents: UniversalEvent[] = [];
   let hasDateErrors = false;
 
-  // 2. Identify column indices dynamically
+  // 2. Identify column indices dynamically using header scoring
   let dateCol = 0;
   let timeCol = 1;
   let titleCol = 2;
   let locationCol = 3;
   let teacherCol = 4;
 
-  for (let r = 0; r < Math.min(20, rawRows.length); r++) {
+  let bestHeaderScore = 0;
+  let bestHeaderRowIdx = -1;
+  let headerDetectedCols: HeaderScores = { score: 0 };
+
+  const maxHeaderSearch = Math.min(25, rawRows.length);
+  for (let r = 0; r < maxHeaderSearch; r++) {
     const row = rawRows[r];
-    for (let c = 0; c < row.length; c++) {
-      const val = cleanText(row[c]).toLowerCase();
-      if (val.includes('дата') || val.includes('день')) dateCol = c;
-      if (val.includes('время') || val.includes('часы')) timeCol = c;
-      if (val.includes('название') || val.includes('предмет') || val.includes('дисциплин')) titleCol = c;
-      if (val.includes('мест') || val.includes('ауд') || val.includes('адрес')) locationCol = c;
-      if (val.includes('преподават') || val.includes('фио')) teacherCol = c;
+    if (!row || !Array.isArray(row)) continue;
+    const scored = scoreHeaderRow(row);
+    if (scored.score > bestHeaderScore && scored.score >= 4) {
+      bestHeaderScore = scored.score;
+      bestHeaderRowIdx = r;
+      headerDetectedCols = scored;
+    }
+  }
+
+  if (bestHeaderScore >= 4) {
+    if (headerDetectedCols.dateCol !== undefined) dateCol = headerDetectedCols.dateCol;
+    if (headerDetectedCols.timeCol !== undefined) timeCol = headerDetectedCols.timeCol;
+    if (headerDetectedCols.titleCol !== undefined) titleCol = headerDetectedCols.titleCol;
+    if (headerDetectedCols.locationCol !== undefined) locationCol = headerDetectedCols.locationCol;
+    if (headerDetectedCols.teacherCol !== undefined) teacherCol = headerDetectedCols.teacherCol;
+
+    // Check adjacent row (e.g. multi-line header) if teacherCol is missing
+    if (headerDetectedCols.teacherCol === undefined && bestHeaderRowIdx + 1 < rawRows.length) {
+      const nextRow = rawRows[bestHeaderRowIdx + 1];
+      if (nextRow && Array.isArray(nextRow)) {
+        for (let c = 0; c < nextRow.length; c++) {
+          if (isTeacherHeader(cleanText(nextRow[c]))) {
+            teacherCol = c;
+            break;
+          }
+        }
+      }
+    }
+  } else {
+    // Fallback: search across top 15 rows
+    for (let r = 0; r < Math.min(15, rawRows.length); r++) {
+      const row = rawRows[r];
+      if (!row || !Array.isArray(row)) continue;
+      for (let c = 0; c < row.length; c++) {
+        const val = cleanText(row[c]);
+        if (!val) continue;
+        if (isDateHeader(val)) dateCol = c;
+        if (isTimeHeader(val)) timeCol = c;
+        if (isTitleHeader(val)) titleCol = c;
+        if (isLocationHeader(val)) locationCol = c;
+        if (isTeacherHeader(val)) teacherCol = c;
+      }
+    }
+  }
+
+  // If teacherCol was not identified from headers, or points to the title column,
+  // inspect data rows to discover which column reliably contains teacher names
+  if (teacherCol === titleCol || headerDetectedCols.teacherCol === undefined) {
+    const teacherVotes: Record<number, number> = {};
+    const inspectStart = Math.max(0, bestHeaderRowIdx + 1);
+    const inspectEnd = Math.min(inspectStart + 25, rawRows.length);
+    for (let r = inspectStart; r < inspectEnd; r++) {
+      const row = rawRows[r];
+      if (!row || !Array.isArray(row)) continue;
+      for (let c = 0; c < row.length; c++) {
+        if (c === dateCol || c === timeCol || c === titleCol) continue;
+        const text = cleanText(row[c]);
+        if (isLikelyTeacher(text)) {
+          teacherVotes[c] = (teacherVotes[c] || 0) + 1;
+        }
+      }
+    }
+    let maxVotes = 0;
+    let votedCol = -1;
+    for (const [cStr, votes] of Object.entries(teacherVotes)) {
+      if (votes > maxVotes) {
+        maxVotes = votes;
+        votedCol = parseInt(cStr, 10);
+      }
+    }
+    if (votedCol !== -1 && maxVotes >= 1) {
+      teacherCol = votedCol;
     }
   }
 
@@ -488,16 +863,37 @@ export function parseExcelWorkbook(
     const row = rawRows[r];
     if (!row || row.length === 0) continue;
 
+    // Skip the recognized header row itself
+    if (r === bestHeaderRowIdx) continue;
+
     const dateCell = row[dateCol];
     const timeCell = cleanText(row[timeCol]);
     const titleCell = cleanText(row[titleCol]);
     const locationCell = cleanText(row[locationCol]);
-    const teacherCell = cleanText(row[teacherCol]);
+    const initialTeacherCandidate = cleanText(row[teacherCol]);
 
     // Check if this row introduces a new date
     const parsedDate = parseDateString(dateCell, docYear);
     if (parsedDate) {
       lastKnownDate = parsedDate;
+    }
+
+    // Dynamic teacher resolution for this row:
+    // Prevent taking subject titles, discipline descriptions, or locations as the teacher
+    let resolvedTeacher: string | undefined = undefined;
+    if (
+      initialTeacherCandidate &&
+      isLikelyTeacher(initialTeacherCandidate) &&
+      !isNotTeacher(initialTeacherCandidate, titleCell)
+    ) {
+      resolvedTeacher = initialTeacherCandidate;
+    } else {
+      // Find teacher in other cells of this row
+      const alt = findTeacherInRow(row, titleCell, [dateCol, timeCol, titleCol, locationCol]);
+      if (alt) {
+        resolvedTeacher = alt.teacher;
+        teacherCol = alt.colIndex; // dynamically update teacherCol for subsequent rows
+      }
     }
 
     // Check if this row is a continuation row for the previous event!
@@ -507,7 +903,7 @@ export function parseExcelWorkbook(
     if (!parsedTime || isAuxiliaryText(titleCell)) {
       if (rawEvents.length > 0) {
         const lastEvent = rawEvents[rawEvents.length - 1];
-        const combinedAux = `${titleCell} ${locationCell} ${teacherCell}`;
+        const combinedAux = `${titleCell} ${locationCell} ${initialTeacherCandidate}`;
         const sub = extractSubgroup(combinedAux);
         if (sub && !lastEvent.subgroup) {
           lastEvent.subgroup = sub;
@@ -519,9 +915,19 @@ export function parseExcelWorkbook(
             lastEvent.lessonTypeName = lType.label;
           }
         }
-        if (!lastEvent.teacher && teacherCell) {
-          lastEvent.teacher = cleanText(teacherCell);
+
+        // Check continuation row for teacher
+        let contTeacher = resolvedTeacher;
+        if (!contTeacher) {
+          const contAlt = findTeacherInRow(row, lastEvent.title, [dateCol, timeCol]);
+          if (contAlt) {
+            contTeacher = contAlt.teacher;
+          }
         }
+        if (contTeacher && (!lastEvent.teacher || isNotTeacher(lastEvent.teacher, lastEvent.title))) {
+          lastEvent.teacher = contTeacher;
+        }
+
         if (!lastEvent.location && locationCell) {
           const loc = parseLocation(locationCell);
           lastEvent.location = loc.location;
@@ -547,12 +953,16 @@ export function parseExcelWorkbook(
     }
 
     // Subgroup extraction from all cells of this row
-    const combinedRowText = `${titleCell} ${locationCell} ${teacherCell}`;
+    const combinedRowText = `${titleCell} ${locationCell} ${initialTeacherCandidate}`;
     const subgroup = extractSubgroup(combinedRowText);
 
-    // Clean title and elective flag
-    const { title, isElective } = cleanSubjectTitle(titleCell);
+    // Clean title, elective flag, and embedded teacher
+    const { title, isElective, embeddedTeacher } = cleanSubjectTitle(titleCell);
     if (!title && !isAuxiliaryText(titleCell)) continue;
+
+    if (!resolvedTeacher && embeddedTeacher && isLikelyTeacher(embeddedTeacher)) {
+      resolvedTeacher = embeddedTeacher;
+    }
 
     // Detect lesson type
     const { type: lessonType, label: lessonTypeName } = detectLessonType(
@@ -582,7 +992,7 @@ export function parseExcelWorkbook(
       eventType: 'pair',
       lessonType,
       lessonTypeName,
-      teacher: cleanText(teacherCell) || undefined,
+      teacher: resolvedTeacher || undefined,
       location: location || undefined,
       address: address || undefined,
       subgroup,
@@ -602,6 +1012,13 @@ export function parseExcelWorkbook(
     newEvent.importKey = createEventSignature(newEvent);
 
     rawEvents.push(newEvent);
+  }
+
+  // Sanitize any event that still has a subject title mistakenly assigned as teacher
+  for (const ev of rawEvents) {
+    if (ev.teacher && isNotTeacher(ev.teacher, ev.title)) {
+      ev.teacher = undefined;
+    }
   }
 
   // 4. Deduplication

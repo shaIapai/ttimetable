@@ -226,6 +226,7 @@ export const ImportPreview: React.FC<ImportPreviewProps> = ({
               <option value="2">Подгруппа 2{userSettings.mySubgroup === '2' ? ' (ваша)' : ''}</option>
               <option value="3">Подгруппа 3{userSettings.mySubgroup === '3' ? ' (ваша)' : ''}</option>
               <option value="4">Подгруппа 4{userSettings.mySubgroup === '4' ? ' (ваша)' : ''}</option>
+              <option value="5">Подгруппа 5{userSettings.mySubgroup === '5' ? ' (ваша)' : ''}</option>
               <option value="all">Все подгруппы</option>
             </select>
           </div>
