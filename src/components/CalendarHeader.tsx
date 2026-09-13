@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { CalendarViewMode, FilterSettings } from '../types';
 import {
   ChevronLeft,
@@ -13,6 +13,7 @@ import {
   List,
 } from 'lucide-react';
 import { formatWeekRange, formatFullRussianDate } from '../utils/dateUtils';
+import { DatePickerPopover } from './DatePickerPopover';
 
 interface CalendarHeaderProps {
   currentDate: Date;
@@ -21,6 +22,7 @@ interface CalendarHeaderProps {
   onPrevWeek: () => void;
   onNextWeek: () => void;
   onToday: () => void;
+  onDateChange?: (date: Date) => void;
   onOpenImport: () => void;
   onOpenAdd: () => void;
   onOpenSettings: () => void;
@@ -37,6 +39,7 @@ export const CalendarHeader: React.FC<CalendarHeaderProps> = ({
   onPrevWeek,
   onNextWeek,
   onToday,
+  onDateChange,
   onOpenImport,
   onOpenAdd,
   onOpenSettings,
@@ -45,6 +48,7 @@ export const CalendarHeader: React.FC<CalendarHeaderProps> = ({
   userSettings,
   onSubgroupQuickChange,
 }) => {
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const weekRangeText = formatWeekRange(currentDate);
 
   return (
@@ -92,8 +96,9 @@ export const CalendarHeader: React.FC<CalendarHeaderProps> = ({
           </div>
         </div>
 
-        {/* Center section: Week Navigation */}
+        {/* Center section: Week Navigation & Date Picker */}
         <div className="flex items-center gap-2">
+          {/* Arrow navigation buttons */}
           <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5 shadow-2xs">
             <button
               id="prev-week-button"
@@ -124,7 +129,41 @@ export const CalendarHeader: React.FC<CalendarHeaderProps> = ({
             </button>
           </div>
 
-          <div className="font-bold text-sm text-slate-800 px-2 select-none">
+          {/* Quick Date/Week Picker Button & Popover */}
+          <div className="relative">
+            <button
+              id="date-picker-toggle-button"
+              type="button"
+              onClick={() => setIsDatePickerOpen((prev) => !prev)}
+              className={`h-8 px-2.5 rounded-lg border flex items-center gap-1.5 text-xs font-semibold transition-all ${
+                isDatePickerOpen
+                  ? 'bg-blue-50 border-blue-300 text-blue-700 shadow-2xs'
+                  : 'bg-white hover:bg-slate-50 border-slate-200 text-slate-700 hover:text-slate-900 shadow-2xs'
+              }`}
+              title="Выбрать конкретную неделю или дату в календарике"
+            >
+              <CalendarDays className="w-3.5 h-3.5 text-blue-600" />
+              <span className="hidden sm:inline">Выбрать неделю</span>
+            </button>
+
+            {isDatePickerOpen && onDateChange && (
+              <DatePickerPopover
+                selectedDate={currentDate}
+                viewMode={viewMode}
+                onSelectDate={(date) => {
+                  onDateChange(date);
+                  setIsDatePickerOpen(false);
+                }}
+                onClose={() => setIsDatePickerOpen(false)}
+              />
+            )}
+          </div>
+
+          <div
+            onClick={() => onDateChange && setIsDatePickerOpen((prev) => !prev)}
+            className="font-bold text-sm text-slate-800 px-2 select-none cursor-pointer hover:text-blue-700 transition-colors"
+            title="Нажмите, чтобы открыть календарик выбора недели"
+          >
             {viewMode === 'day' ? formatFullRussianDate(currentDate) : weekRangeText}
           </div>
         </div>

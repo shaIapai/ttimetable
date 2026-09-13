@@ -269,6 +269,7 @@ export default function App() {
             onPrevWeek={handlePrevWeek}
             onNextWeek={handleNextWeek}
             onToday={handleToday}
+            onDateChange={setCurrentDate}
             onOpenImport={() => setIsImportModalOpen(true)}
             onOpenAdd={() => {
               setAddModalInitialDate(formatISODate(currentDate));
