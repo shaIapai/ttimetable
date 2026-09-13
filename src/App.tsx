@@ -152,7 +152,9 @@ export default function App() {
       ...eventToCopy,
       id: `copy-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
       title: `${eventToCopy.title} (копия)`,
+      importKey: undefined,
       source: 'manual',
+      isUserModified: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };

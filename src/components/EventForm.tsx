@@ -69,6 +69,7 @@ export const EventForm: React.FC<EventFormProps> = ({
       note: note.trim() || undefined,
       reminder,
       source: 'manual',
+      isUserModified: true,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
